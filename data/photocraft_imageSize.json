@@ -1,0 +1,14 @@
+[
+  {
+    "disabledReason": "no document open",
+    "enabled": false,
+    "id": "image.imageSize",
+    "label": "Image Size…",
+    "menu": [
+      "Image"
+    ],
+    "needsDocument": true,
+    "params": "{\"width\":px,\"height\":px,\"percent\":%? (both sides; an explicit side wins),\"resolution\":ppi,\"keepPrintSize\":bool=false (with only a resolution: resample the pixels to keep the print size),\"resample\":\"automatic|preserveDetails|bicubicSmoother|bicubicSharper|bicubicAutomatic|bicubic|nearest|bilinear|lanczos|none\"=\"bicubic\"} → {width,height} (the document's size after the command; \"none\" changes the resolution only)",
+    "shortcut": null
+  }
+]
