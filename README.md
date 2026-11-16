@@ -26,7 +26,25 @@ git push
 ```
 
 - 처음 한 번은 수십 분 걸릴 수 있어요. 끊겨도 다시 실행하면 이어서 받아요.
-- 이미지 원본은 `images_raw/`에 저장되고 git에는 올라가지 않아요. 2단계에서 PhotoCraft로 크기를 줄여 `images/`에 올려요.
+- 이미지 원본은 `images_raw/`에 저장되고 git에는 올라가지 않아요.
+
+## 카드 정리 (수집 후)
+
+```powershell
+python collector/bdb_parse.py     # data/cards/*.json → data/cards.json (시뮬레이터가 쓰는 정리본)
+```
+
+## 카드 이미지 (PC에서, PhotoCraft 사용)
+
+```powershell
+python collector/bdb_images.py
+git add images data
+git commit -m "카드 이미지"
+git push
+```
+
+- 공식 썸네일과 테리토리 뒷면을 받고, PhotoCraft(`image.imageSize`)로 가로 240px WebP로 줄여 `images/`에 저장해요.
+- 매개변수는 PhotoCraft에서 직접 조회하고, 한 장으로 결과 크기를 확인한 뒤에만 전체에 적용해요.
 
 ## 테스트 (Node.js, jsdom 필요)
 
