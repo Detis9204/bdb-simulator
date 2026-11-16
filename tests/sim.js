@@ -1,11 +1,12 @@
 // 무작위 자동 대전으로 엔진 검증 (브라이트 규칙)
 const fs = require('fs');
-const html = fs.readFileSync((process.argv[2] || require('path').join(__dirname, '../simulator/index.html')), 'utf8');
+const html = fs.readFileSync(process.argv[2], 'utf8');
 const code = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const ctx = {};
 new Function('ctx', code + '\nctx.Engine=Engine;ctx.DEFS=DEFS;ctx.RED=DECK_RED;ctx.BLUE=DECK_BLUE;ctx.DECKS=DECKS;ctx.RULES=RULES;')(ctx);
 const { Engine, DEFS, RED, BLUE, RULES, DECKS } = ctx;
-const PAIRS = [['bocchi','bocchi'],['bocchi','red'],['blue','bocchi'],['red','blue']];
+const SAMPLES = Object.keys(DECKS).filter(k => DECKS[k].sample);
+const PAIRS = [['bocchi','bocchi'],['bocchi','red'],['blue','bocchi'],['red','blue'], null, null, null, null];
 const pick = a => a[Math.floor(Math.random() * a.length)];
 
 function check(s) {
@@ -13,7 +14,7 @@ function check(s) {
     const P = s.players[p];
     const n = P.deck.length + P.hand.length + P.life.length + P.energy.length + P.drop.length
       + s.field.filter(u => u.owner === p).length + (s.pending?.type === 'shot' && s.pending.player === p ? 1 : 0);
-    if (n !== 40) throw new Error(`카드 수 불일치 P${p + 1}: ${n}`);
+    if (n !== s.size[p]) throw new Error(`카드 수 불일치 P${p + 1}: ${n} / ${s.size[p]}`);
   }
   for (const u of s.field) { const pw = Engine.power(s, u); if (pw <= 0 || u.damage >= pw) throw new Error('파괴되지 않은 유닛'); }
   if (s.winner == null && !s.pending && (s.queue.length || s.conts.length)) throw new Error('처리 대기열이 남은 채 멈춤');
@@ -23,10 +24,14 @@ const st = { games: 0, turns: 0, wins: [0, 0], events: {} };
 const ev = k => st.events[k] = (st.events[k] || 0) + 1;
 console.log('덱 검사:', Object.fromEntries(Object.entries(DECKS).map(([k,d])=>[k,Engine.validateDeck(d)])));
 for (let g = 0; g < 1200; g++) {
-  const pr = PAIRS[g % PAIRS.length];
+  const pr = PAIRS[g % PAIRS.length] || [pick(SAMPLES), pick(SAMPLES)];
   let s = Engine.newGame(DECKS[pr[0]], DECKS[pr[1]]);
+  const size = pr.map(k => DECKS[k].main.reduce((t, [, n]) => t + n, 0));
+  s.size = size;
   let steps = 0;
-  const act = a => { s = Engine.apply(s, a); check(s); };
+  const act = a => { s = Engine.apply(s, a); s.size = size; check(s); };
+  const ALL = s2 => { const r = []; for (let q = 0; q < 2; q++) for (const z of ['hand','drop','energy','life','deck']) for (const c of s2.players[q][z]) r.push(c.uid); s2.field.forEach(u => r.push(u.uid)); return r; };
+  const OPS = [['move','hand'],['move','drop'],['move','energy'],['move','life'],['move','deckTop'],['move','deckBottom'],['move','field'],['rest'],['pow'],['hitmod'],['dmg'],['draw'],['shuffle'],['lifeFromDeck'],['lifeToHand']];
   while (s.winner == null) {
     if (++steps > 8000) throw new Error('게임이 끝나지 않음');
     const pd = s.pending;
@@ -61,6 +66,11 @@ for (let g = 0; g < 1200; g++) {
       } else if (pd.type === 'flashback') {
         act({ type: 'FLASHBACK', uid: Math.random() < .85 ? pick(Engine.flashTargets(s, pd.player)) : null });
       } else throw new Error('알 수 없는 선택: ' + pd.type);
+      continue;
+    }
+    if (Math.random() < .04) {   // 수동 조작 무작위 시도
+      const [op, to] = pick(OPS), a = { type: 'MANUAL', op, to, uid: pick(ALL(s)), p: Math.random() < .5 ? 0 : 1, v: pick([1000, -1000, 1, -1]) };
+      try { act(a); ev('manual_' + op); } catch (e) { if (!/찾을 수|아닙니다|유닛만|비었|없습니다/.test(e.message)) throw e; }
       continue;
     }
     const p = s.active;
