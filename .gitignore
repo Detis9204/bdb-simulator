@@ -1,0 +1,5 @@
+# 카드 이미지 원본: 용량이 커서 올리지 않음 (줄인 이미지만 images/에 올림)
+images_raw/
+node_modules/
+__pycache__/
+*.pyc
