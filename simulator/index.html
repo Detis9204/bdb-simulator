@@ -94,6 +94,10 @@ button.pile:hover{border-color:var(--cyan)}
 .terr b{display:block;font-family:var(--jp);font-size:13px;color:var(--ink);font-weight:800}
 .terr.open{border-style:solid;border-color:var(--yellow);background:linear-gradient(160deg,#3a3016,#1a1733 70%);color:var(--ink)}
 .terr .st{display:inline-block;margin-top:4px;padding:1px 8px;border-radius:10px;font-size:11px;background:#2e2a52}
+.terr.img{padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px}
+.terr.img img{width:100%;max-width:120px;border-radius:8px;display:block}
+.terr.img:not(.open) img{filter:saturate(.8)}
+.terr.img .st{margin-top:0}
 .terr.open .st{background:var(--yellow);color:#2b2200;font-weight:700}
 
 /* 에너지 줄 */
@@ -1211,14 +1215,15 @@ function cardHTML(d, opt = {}) {
     if (pw !== d.power || ht !== d.hit) badge = `<span class="badge ${pw > d.power || ht > d.hit ? 'up' : 'down'}">${pw}${ht !== d.hit ? ` / 히트 ${ht}` : ''}</span>`;
   }
   // 텍스트 카드로 먼저 그리고, 이미지가 실제로 불러와지면 이미지로 바꿈 (불러온 주소는 기억해 다음부터 바로 이미지)
-  const loaded = d.img && IMG_OK.has(d.img);
-  const img = d.img ? `<img class="art" src="${d.img}" alt="${esc(d.name)}" draggable="false" ${loaded ? '' : 'onload="imgLoaded(this)"'}>` : '';
+  const src = imgUrl(d);
+  const loaded = src && IMG_OK.has(src);
+  const img = src ? `<img class="art" src="${src}" alt="${esc(d.name)}" draggable="false" ${loaded ? '' : 'onload="imgLoaded(this)"'}>` : '';
   const focus = ui.detail && (opt.u ? ui.detail.uid === u.uid : opt.uid && ui.detail.uid === opt.uid) ? 'focus' : '';
-  return `<div class="card ${d.color} ${d.img ? 'hasimg' : ''} ${d.img && !loaded ? 'noimg' : ''} ${focus} ${opt.cls || ''}" data-id="${d.id}" ${opt.uid ? `data-cu="${opt.uid}"` : ''} ${attrs} title="${esc(d.name)}">
+  return `<div class="card ${d.color} ${src ? 'hasimg' : ''} ${src && !loaded ? 'noimg' : ''} ${focus} ${opt.cls || ''}" data-id="${d.id}" ${opt.uid ? `data-cu="${opt.uid}"` : ''} ${attrs} title="${esc(d.name)}">
     ${img}<span class="cost">${d.cost}</span>${trig}
     ${kws.length ? `<span class="kw">${kws.map(k => `<span>${KW_TEXT[k]}</span>`).join('')}</span>` : ''}
     <div class="body"><div class="nm">${esc(d.name)}</div><div class="ty">${esc(typeLine(d))}</div>${abs}${stats}</div>
-    ${u && u.damage ? `<span class="dmg">-${u.damage}</span>` : ''}${d.img ? badge : ''}</div>`;
+    ${u && u.damage ? `<span class="dmg">-${u.damage}</span>` : ''}${src ? badge : ''}</div>`;
 }
 const clickAttrs = (z, o, uid) => `data-z="${z}" data-o="${o}" data-u="${uid}" tabindex="0" role="button"`;
 
@@ -1258,7 +1263,11 @@ function lifeHTML(p) {
 }
 function terrHTML(p) {
   const T = S.players[p].territory, TD = DEFS[T.id];
+  const src = imgUrl(TD, !T.open);   // 미개방이면 뒷면 그림
+  if (src && IMG_OK.has(src)) return `<div class="terr img ${T.open ? 'open' : ''}" data-id="${TD.id}" data-cu="${T.uid}" tabindex="0" role="button" title="${esc(TD.name)}: ${esc(TD.tfx.text)}" style="cursor:pointer">
+    <img src="${src}" alt="${esc(TD.name)}"><span class="st">${T.open ? '개방' : '미개방'}</span></div>`;
   return `<div class="terr ${T.open ? 'open' : ''}" data-id="${TD.id}" data-cu="${T.uid}" tabindex="0" role="button" title="${esc(TD.tfx.text)}" style="cursor:pointer">
+    ${src ? `<img src="${src}" alt="" hidden onload="imgLoaded(this);render()">` : ''}
     ${T.open ? `<b>${esc(TD.name)}</b>${esc(TD.tfx.text)}` : `<b>테리토리</b>칭호 「${esc(TD.titles.join('/'))}」, 총 코스트 ${TD.cost}`}
     <div><span class="st">${T.open ? '개방' : '미개방'}</span></div></div>`;
 }
@@ -1361,6 +1370,40 @@ function promptHTML() {
 
 /* ── 카드 설명 ── */
 const IMG_OK = new Set();
+/* ── 카드 이미지 묶음 (게시 페이지용) ──
+   게시 페이지는 외부 이미지를 못 불러와서, 페이지와 함께 올린 작품별 묶음(packs/*.bin)을 받아 잘라 씀.
+   묶음 색인을 못 받으면(예: PC에서 연 파일) 공식 이미지 주소를 그대로 씀. */
+const Packs = { index: null, urls: {}, loading: {} };
+async function initPacks() {
+  try {
+    const r = await fetch('packs/index.json');
+    if (r.ok) { Packs.index = await r.json(); render(); }
+  } catch {}
+}
+async function loadPack(name) {
+  if (Packs.loading[name]) return;
+  Packs.loading[name] = true;
+  try {
+    const buf = await (await fetch('packs/' + Packs.index.packs[name])).arrayBuffer();
+    for (const [k, [p, o, l]] of Object.entries(Packs.index.img)) {
+      if (p !== name) continue;
+      const url = URL.createObjectURL(new Blob([buf.slice(o, o + l)], { type: 'image/webp' }));
+      Packs.urls[k] = url; IMG_OK.add(url);
+    }
+    render();
+  } catch { /* 실패한 묶음은 다시 요청하지 않음 (텍스트 카드로 표시) */ }
+}
+/** 카드 이미지 주소: 묶음에서 꺼낸 blob 주소 → 없으면 공식 주소 (back=true면 테리토리 미개방면) */
+function imgUrl(d, back) {
+  if (!d.jp) return back ? null : (d.img || null);
+  const key = (back ? 'b' : '') + d.jp;
+  if (Packs.urls[key]) return Packs.urls[key];
+  if (Packs.index) {
+    const e = Packs.index.img[key];
+    if (e) { loadPack(e[0]); return null; }
+  }
+  return back ? null : (d.img || null);
+}
 function imgLoaded(el) {
   IMG_OK.add(el.getAttribute('src'));
   el.closest('.card')?.classList.remove('noimg');
@@ -1404,8 +1447,9 @@ function detailHTML(det) {
       <span>히트 <b class="${ht > d.hit ? 'up' : ht < d.hit ? 'down' : ''}">${ht}</b>${ht !== d.hit ? ` (기본 ${d.hit})` : ''}</span>
       ${u && u.damage ? `<span>받은 데미지 <b class="down">${u.damage}</b></span>` : ''}</div>`;
   }
-  const art = d.img && IMG_OK.has(d.img) ? `<img class="big" src="${d.img}" alt="${esc(d.name)}">`
-    : `<div class="bigtext">${cardHTML(d)}</div>${d.img ? `<img class="big" src="${d.img}" alt="${esc(d.name)}" hidden onload="IMG_OK.add(this.getAttribute('src'));this.previousElementSibling.remove();this.hidden=false">` : ''}`;
+  const bsrc = imgUrl(d);
+  const art = bsrc && IMG_OK.has(bsrc) ? `<img class="big" src="${bsrc}" alt="${esc(d.name)}">`
+    : `<div class="bigtext">${cardHTML(d)}</div>${bsrc ? `<img class="big" src="${bsrc}" alt="${esc(d.name)}" hidden onload="IMG_OK.add(this.getAttribute('src'));this.previousElementSibling.remove();this.hidden=false">` : ''}`;
   return `<div class="detail" data-detail="${d.id}">
     ${art}
     <h3>${esc(d.name)}</h3>
@@ -1611,6 +1655,7 @@ if (typeof document !== 'undefined' && document.getElementById('app')) {
   });
   render();
   Net.init();
+  initPacks();
 }
 </script>
 </body>

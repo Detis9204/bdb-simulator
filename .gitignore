@@ -3,3 +3,4 @@ images_raw/
 node_modules/
 __pycache__/
 *.pyc
+dist/
