@@ -307,9 +307,42 @@ def parse_cond(t):
     return out
 
 
+_MAY = re.compile(r'(?:て|で)(?:も)?よい')
+
+
+def _has_choice(steps):
+    for st in steps:
+        if st.get('may') or st.get('upto'):
+            return True
+        if st.get('op') == 'if' and (_has_choice(st.get('then', [])) or _has_choice(st.get('else', []))):
+            return True
+    return False
+
+
+def _mark_may(steps):
+    st = steps[0]
+    if st.get('op') == 'if' and st.get('then'):
+        _mark_may(st['then'])
+    else:
+        st['may'] = 1
+
+
 def parse_effects(t):
-    """효과 문장들 -> 단계 목록 | None"""
-    steps = []
+    """효과 문장들 -> 단계 목록 | None. 「~てよい」 문장은 실행 전에 쓸지 묻도록 may 표시"""
+    out = []
+    for sent in [x for x in t.split('。') if x.strip()]:
+        n0 = len(out)
+        if _parse_seq(sent, out) is None:
+            return None
+        steps = out[max(0, n0 - 1):] if len(out) <= n0 else out[n0:]
+        if steps and _MAY.search(sent) and not _has_choice(steps):
+            _mark_may(steps)
+    return out
+
+
+def _parse_seq(t, steps=None):
+    """효과 문장 -> 단계 목록 | None (steps가 있으면 거기에 이어 붙임: '代わりに'가 앞 문장의 단계를 바꿀 수 있게)"""
+    steps = [] if steps is None else steps
     t = t.strip()
     while t:
         t = t.lstrip('。、 ')
@@ -516,7 +549,7 @@ def parse_card(d):
     for x in lines:
         if x.startswith('【スキル】'):
             skill = parse_skill(x)
-    abs_, done = [], set()
+    abs_, done, mts = [], set(), []
     i = 0
     while i < len(lines):
         ln = lines[i]
@@ -584,8 +617,57 @@ def parse_card(d):
             r['li'] = [i]
             abs_.append(r)
             done.add(i)
+        else:
+            mt = manual_trigger(ln, d)
+            if mt:
+                mt['li'] = [i]
+                mts.append(mt)
         i += 1
+    # 커맨드의 못 읽은 본문은 한 번에 묶어 플레이할 때 직접 처리
+    play = [m for m in mts if m['on'] == 'play']
+    if len(play) > 1:
+        play[0]['li'] = sorted(sum((m['li'] for m in play), []))
+        mts = [m for m in mts if m['on'] != 'play'] + [play[0]]
+    if mts:
+        d['mt'] = mts
     return abs_, done
+
+
+def manual_trigger(ln, d):
+    """자동 처리하지 못한 줄이라도 발동 시점을 알면 그때 '직접 처리' 창을 띄우도록 {on, src, if}"""
+    hold = [{'hold': 1}] if '⁅保持称号開放中⁆' in ln else []
+    body = re.sub(r'^(?:⁅(?:自動|永続|保持称号開放中|自|永)⁆)+', '', ln).strip()
+    if '⁅永続⁆' in ln or ln.startswith('【スキル】') or re.fullmatch(r'\(.*\)', ln):
+        return None
+    if '⁅自動⁆' in ln or '⁅自⁆' in ln:
+        m = re.match(r'(?P<t>(?:あなたの(?:称号「[^」]+」の)?テリトリー(?:が開放されていて|開放中で)、)?[^、]*?時)、', body)
+        if m:
+            tr = parse_trigger(m.group('t'))
+            if tr:
+                return {'on': tr[0], 'src': tr[1], 'if': hold + tr[2]}
+            h = m.group('t')
+            if 'このユニット' in h and '登場' in h:
+                return {'on': 'enter', 'src': 'self', 'if': hold}
+            if 'このユニット' in h and 'アタック' in h and '終了' not in h:
+                return {'on': 'attack', 'src': 'self', 'if': hold}
+            if 'このユニット' in h and 'フィールドからドロップ' in h:
+                return {'on': 'leave', 'src': 'self', 'if': hold}
+        return None
+    # 작품 고유 키워드: 괄호 설명으로 시점을 판단
+    if body.startswith('【'):
+        if re.search(r'\(登場時', body):
+            return {'on': 'enter', 'src': 'self', 'if': hold}
+        if re.search(r'\(アタック時|アタック時、', body) or body.startswith('【CAD】') or body.startswith('【マギア】'):
+            return {'on': 'attack', 'src': 'self', 'if': hold}
+        if re.search(r'バトルに負けた時', body):
+            return {'on': 'lose', 'src': 'self', 'if': hold}
+        if re.search(r'エンドフェイズ', body) and body.startswith('【コスプレ'):
+            return {'on': 'endStart', 'src': 'me', 'if': hold + [{'terr': 1}]}
+        if d.get('type') != 'command':
+            return None
+    if d.get('type') == 'command':
+        return {'on': 'play', 'src': 'self', 'if': []}
+    return None
 
 
 def parse_body(ln, d, skill):
