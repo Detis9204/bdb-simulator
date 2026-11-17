@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from translate_rules import rule_translate
+from parse_effects import parse_card
 _KO = (json.load(open(ROOT / 'db' / 'ko_lines.json', encoding='utf-8'))['lines'] if (ROOT / 'db' / 'ko_lines.json').exists() else {})
 
 
@@ -114,6 +115,13 @@ def to_def(c):
         k = [ko(x) for x in text]
         if any(k):
             d['ko'] = k
+    ab, done = parse_card(d)
+    if ab:
+        d['ab'] = ab
+        d['al'] = sorted(done)
+    nlines = len(d.get('text') or []) if c['type'] != 'territory' else len([x for x in d['tfx']['text'].split(' / ') if x != '(효과 없음)'])
+    if d.get('manual') and len(done) >= nlines:
+        del d['manual']   # 모든 줄 자동 처리
     if not d['icons']:
         del d['icons']
     if not d['attr']:
