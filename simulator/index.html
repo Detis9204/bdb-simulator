@@ -380,19 +380,28 @@ details.rules li{margin:3px 0}
    --sh = 시트 높이. 각 칸의 위치·크기는 공식 시트 그림에서 잰 비율(%)이고, 카드 크기도 시트 높이에 비례.
    상대 시트는 180도 돌린 배치 */
 :root{--ps-ink:#3a3352;--ps-dim:#857a9b;--ps-line-p:#f0a9c6;--ps-line-b:#9fcbe8}
-.board{--sh:min(calc((100vh - 150px) / 2.36), calc((100vw - 372px) / 1.4134));align-items:center;padding:10px 16px}
-@media (max-width:1100px){.board{--sh:min(calc((100vh - 150px) / 2.36), calc((100vw - 40px) / 1.4134))}}
-.board > *{width:calc(var(--sh) * 1.4134);max-width:100%;flex:none}
-.board > .strip{width:max(calc(var(--sh) * 1.4134), min(100%, 900px))}
+.board{--sh:clamp(200px, calc((100vh - 180px) / 2.46), 480px);align-items:stretch;padding:10px 16px}
+.board > *{width:100%;flex:none}
 .ps{position:relative;height:var(--sh);border-radius:calc(var(--sh) * .03);
+  /* 세로 비율은 공식 시트 그대로(3단), 가로는 화면 폭에 맞춰 필드·에너지 존이 늘어남 */
+  display:grid;gap:calc(var(--sh) * .02);padding:calc(var(--sh) * .02);
+  grid-template-columns:calc(var(--sh) * .36) minmax(0,1fr) calc(var(--sh) * .34);
+  grid-template-rows:1fr 1fr .95fr;
+  grid-template-areas:"yellow field terr" "red field deck" "remove energy drop";
   --ch:calc(var(--sh) * .27);--cw:calc(var(--ch) * .714);--fs:calc(var(--sh) * .028);
   background:linear-gradient(180deg,#f7d8e6 0%,#eadff0 45%,#d6e8f4 100%);color:var(--ps-ink);box-shadow:0 6px 24px #0006}
-.ps.them{background:linear-gradient(0deg,#f7d8e6 0%,#eadff0 45%,#d6e8f4 100%)}
+.ps.them{background:linear-gradient(0deg,#f7d8e6 0%,#eadff0 45%,#d6e8f4 100%);
+  grid-template-rows:.95fr 1fr 1fr;grid-template-areas:"drop energy remove" "deck field red" "terr field yellow"}
+.ps .lz.y{grid-area:yellow}.ps .lz.r{grid-area:red}
+.ps .remove{grid-area:remove}.ps .field{grid-area:field}.ps .terr{grid-area:terr}.ps .deck{grid-area:deck}.ps .energy{grid-area:energy}.ps .drop{grid-area:drop}
+.ps .terr{flex-direction:row!important;align-items:stretch}
+.ps .terr .zl{writing-mode:horizontal-tb}
+.ps .terr{display:grid!important;grid-template-rows:auto minmax(0,1fr)}
 .ps.turn{box-shadow:0 0 0 3px var(--pink),0 6px 24px #0006}
 .ps .pname{position:absolute;top:-11px;left:calc(var(--sh) * .05);background:var(--night);color:var(--ink);padding:1px 12px;font-weight:700;font-size:12.5px;border-radius:6px;z-index:3;white-space:nowrap}
 .ps.them .pname{top:auto;bottom:-11px}
 .ps.turn .pname{color:var(--pink)}
-.ps .z{position:absolute;background:#ffffffa6;border:1.5px solid var(--ps-line-p);border-radius:calc(var(--sh) * .02);min-width:0;min-height:0;color:var(--ps-ink);
+.ps .z{position:relative;background:#ffffffa6;border:1.5px solid var(--ps-line-p);border-radius:calc(var(--sh) * .02);min-width:0;min-height:0;color:var(--ps-ink);
   padding:calc(var(--sh) * .015) calc(var(--sh) * .02);text-align:left;overflow:hidden;font-size:var(--fs)}
 .ps .z.energy,.ps .z.drop,.ps .z.remove,.ps .z.deck{border-color:var(--ps-line-b)}
 .ps button.z{font:inherit;font-size:var(--fs);cursor:pointer}
@@ -433,10 +442,11 @@ details.rules li{margin:3px 0}
 .ps .terr.open{border-color:#e6b422;background:#fff6d6}
 .ps .terr.open .st{color:#9a7300;font-weight:700}
 /* 덱·드롭·리무브 */
-.ps .pilez{display:flex;flex-direction:column}
-.ps .pilez .stack{flex:1;display:flex;align-items:center;justify-content:center;gap:8%;min-height:0}
-.ps .pilez .stack b{font-family:var(--num);font-weight:400;font-size:calc(var(--fs) * 2.2);line-height:1}
-.ps .pilez .cardback,.ps .pilez .mini{height:82%;width:auto;aspect-ratio:5/7;border-radius:4px;flex:none}
+.ps .pilez{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:4px}
+.ps .pilez .zl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ps .pilez .stack{flex:1;display:flex;align-items:center;justify-content:center;gap:10%;min-height:0;margin:0}
+.ps .pilez .stack b{font-family:var(--num);font-weight:400;font-size:calc(var(--sh) * .06);line-height:1;flex:none}
+.ps .pilez .cardback,.ps .pilez .mini{height:100%;max-height:calc(var(--sh) * .2);width:auto;aspect-ratio:5/7;border-radius:4px;flex:none;object-fit:cover}
 .ps .mini{object-fit:cover;box-shadow:0 1px 4px #0003}
 .ps .mini.txt{display:block;font-family:var(--jp);font-size:calc(var(--fs) * .7);line-height:1.2;padding:3px;overflow:hidden;background:#fff;border:1.5px solid #aaa}
 /* 에너지 존 */
@@ -457,6 +467,14 @@ details.rules li{margin:3px 0}
 .hand.me .handrow{height:calc(var(--ch) + 12px);justify-content:center}
 .hand .empty{color:var(--ink-faint);font-size:12px}
 .strip{height:46px;flex-basis:46px}
+
+/* 넓은 화면: 카드를 크게, 테리토리는 그림 옆에 이름 */
+.ps{--ch:calc(var(--sh) * .36)}
+.hand.me{--ch:calc(var(--sh) * .44)}
+.ps .terr .tbody{flex-direction:row!important;align-items:stretch;gap:8px}
+.ps .terr img,.ps .terr .tcard{height:100%;width:auto;max-width:55%;flex:none}
+.ps .terr .tinfo{position:static!important;background:none!important;text-align:left!important;align-self:center;flex:1;min-width:0}
+.ps .terr .tinfo b{color:var(--ps-ink)!important;font-weight:800;white-space:normal!important;display:-webkit-box!important;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 </style>
 </head>
 <body>
@@ -1542,11 +1560,7 @@ const PS_BOX = {
   field: [26.4, 0, 56.8, 67.3], energy: [19.3, 68.4, 63.4, 30.3],
   terr: [84.1, 1.8, 14.3, 31.8], deck: [84.1, 35.2, 14.3, 32.1], drop: [84.1, 68.4, 14.3, 30.3],
 };
-function psPos(k, mine) {
-  let [x, y, w, h] = PS_BOX[k];
-  if (!mine) { x = 100 - x - w; y = 100 - y - h; }
-  return `style="left:${x}%;top:${y}%;width:${w}%;height:${h}%"`;
-}
+function psPos() { return ''; }   // 배치는 CSS 그리드(.ps)가 맡음
 function lifeHTML(p, mine) {
   // 라이프 존: 옐로 존(6~10번째)과 레드 존(1~5번째)
   const n = S.players[p].life.length;
