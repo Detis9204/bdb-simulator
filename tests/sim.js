@@ -12,7 +12,7 @@ const pick = a => a[Math.floor(Math.random() * a.length)];
 function check(s) {
   for (let p = 0; p < 2; p++) {
     const P = s.players[p];
-    const n = P.deck.length + P.hand.length + P.life.length + P.energy.length + P.drop.length
+    const n = P.deck.length + P.hand.length + P.life.length + P.energy.length + P.drop.length + (P.remove||[]).length
       + s.field.filter(u => u.owner === p).length + (s.pending?.type === 'shot' && s.pending.player === p ? 1 : 0);
     if (n !== s.size[p]) throw new Error(`카드 수 불일치 P${p + 1}: ${n} / ${s.size[p]}`);
   }
@@ -31,7 +31,7 @@ for (let g = 0; g < 1200; g++) {
   let steps = 0;
   const act = a => { s = Engine.apply(s, a); s.size = size; check(s); };
   const ALL = s2 => { const r = []; for (let q = 0; q < 2; q++) for (const z of ['hand','drop','energy','life','deck']) for (const c of s2.players[q][z]) r.push(c.uid); s2.field.forEach(u => r.push(u.uid)); return r; };
-  const OPS = [['move','hand'],['move','drop'],['move','energy'],['move','life'],['move','deckTop'],['move','deckBottom'],['move','field'],['rest'],['pow'],['hitmod'],['dmg'],['draw'],['shuffle'],['lifeFromDeck'],['lifeToHand']];
+  const OPS = [['move','hand'],['move','drop'],['move','energy'],['move','life'],['move','deckTop'],['move','deckBottom'],['move','field'],['rest'],['pow'],['hitmod'],['dmg'],['draw'],['shuffle'],['lifeFromDeck'],['lifeToHand'],['move','remove']];
   while (s.winner == null) {
     if (++steps > 8000) throw new Error('게임이 끝나지 않음');
     const pd = s.pending;

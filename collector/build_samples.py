@@ -14,6 +14,14 @@ import json, re, sys, unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from translate_rules import rule_translate
+_KO = (json.load(open(ROOT / 'db' / 'ko_lines.json', encoding='utf-8'))['lines'] if (ROOT / 'db' / 'ko_lines.json').exists() else {})
+
+
+def ko(line):
+    """한국어 번역: 번역 DB 우선, 없으면 정형 문장 규칙, 그래도 없으면 None"""
+    return _KO.get(line) or rule_translate(line)
 CARDS = ROOT / 'data' / 'cards.json'
 DECKS = ROOT / 'data' / 'decks_winning.json'
 HTML = ROOT / 'simulator' / 'index.html'
@@ -90,11 +98,17 @@ def to_def(c):
         rest.append(line)
     if c['type'] == 'territory':
         d['tfx'] = {'text': ' / '.join(rest) or '(효과 없음)'}
+        k = [ko(x) for x in rest]
+        if rest and all(k):
+            d['tfx']['ko'] = ' / '.join(k)
     else:
         text = rest
     if text:
         d['text'] = text
         d['manual'] = 1
+        k = [ko(x) for x in text]
+        if any(k):
+            d['ko'] = k
     if not d['icons']:
         del d['icons']
     if not d['attr']:
