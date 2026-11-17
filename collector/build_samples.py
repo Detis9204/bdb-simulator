@@ -118,6 +118,7 @@ def to_def(c):
     ab, done = parse_card(d)
     if ab:
         d['ab'] = ab
+    if done:
         d['al'] = sorted(done)
     nlines = len(d.get('text') or []) if c['type'] != 'territory' else len([x for x in d['tfx']['text'].split(' / ') if x != '(효과 없음)'])
     if d.get('manual') and len(done) >= nlines:
