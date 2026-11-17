@@ -475,6 +475,16 @@ details.rules li{margin:3px 0}
 .ps .terr img,.ps .terr .tcard{height:100%;width:auto;max-width:55%;flex:none}
 .ps .terr .tinfo{position:static!important;background:none!important;text-align:left!important;align-self:center;flex:1;min-width:0}
 .ps .terr .tinfo b{color:var(--ps-ink)!important;font-weight:800;white-space:normal!important;display:-webkit-box!important;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+
+/* 진행 바는 가운데 정렬, 턴 진행 버튼은 내 패 오른쪽 */
+.strip{justify-content:center}
+.prompt.in{flex:0 1 auto;justify-content:center}
+.prompt.in .msg{flex:0 1 auto;text-align:center}
+.hand.me{display:flex;align-items:center;gap:12px}
+.hand.me .handrow{flex:1;min-width:0}
+.turnbtns{flex:none;display:flex;flex-direction:column;gap:8px;min-width:150px}
+.turnbtns button{padding:10px 16px;font-size:15px;display:flex;flex-direction:column;align-items:center;line-height:1.2}
+.turnbtns button small{font-size:11px;opacity:.75;font-weight:400}
 </style>
 </head>
 <body>
@@ -1588,7 +1598,11 @@ function matHTML(p, isViewer) {
   const units = Engine.unitsOf(S, p);
   const standing = P.energy.filter(e => !e.rested).length;
   const rz = S.turnCount > 0 && Engine.inRedZone(S, p);
-  const hand = isViewer ? `<div class="hand me"><div class="handrow">${showHand ? P.hand.map(c => handCardHTML(p, c)).join('') || '<span class="empty">패가 없습니다</span>' : ''}</div></div>` : '';
+  const canNext = isViewer && myControl() && S.active === p && !S.pending && S.winner == null && (S.phase === 'main' || S.phase === 'attack') && !ui.tgt;
+  const turnBtns = canNext ? `<div class="turnbtns">
+      ${S.phase === 'main' ? '<button class="go" data-b="next">공격 페이즈로</button>' : ''}
+      <button class="${S.phase === 'attack' ? 'go' : ''}" data-b="endTurn">턴 종료<small>엔드 페이즈로</small></button></div>` : '';
+  const hand = isViewer ? `<div class="hand me"><div class="handrow">${showHand ? P.hand.map(c => handCardHTML(p, c)).join('') || '<span class="empty">패가 없습니다</span>' : ''}</div>${turnBtns}</div>` : '';
   const sheet = `<section class="ps ${m ? 'me' : 'them'} ${S.active === p ? 'turn' : ''} ${rz ? 'rz' : ''}" data-mat="${p}" aria-label="${P.name}의 플레이 시트">
     <span class="pname">${P.name}${S.active === p ? ', 턴 진행 중' : ''}${!isViewer ? `, 패 ${P.hand.length}장` : ''}${rz ? ', 레드 존' : ''}</span>
     ${lifeHTML(p, m)}
@@ -1612,13 +1626,10 @@ function matHTML(p, isViewer) {
    페이즈 표시와 '다음 페이즈' 버튼을 내 필드 바로 위에 둠 */
 function promptBar() {
   const pr = promptHTML();
-  const canNext = myControl() && !S.pending && S.winner == null && (S.phase === 'main' || S.phase === 'attack') && !ui.tgt;
-  const nextLabel = S.phase === 'main' ? '공격 페이즈로' : '턴 종료';
   const phases = `<div class="phases" aria-label="페이즈">${PHASES.map(([k, t]) => `<span class="${S.phase === k ? 'now' : ''}">${t}</span>`).join('')}</div>`;
-  const next = canNext ? `<button class="go nextph" data-b="next">${nextLabel}</button>` : '';
   const floating = pr.includes('class="cards"');
   const inner = floating ? `<div class="prompt in"><div class="msg">가운데 선택 창에서 골라 주세요.</div></div>` : pr.replace('class="prompt"', 'class="prompt in"');
-  return `<div class="strip">${phases}${inner}${next}</div>` + (floating ? pr.replace('class="prompt"', 'class="prompt float" role="dialog"') : '');
+  return `<div class="strip">${phases}${inner}</div>` + (floating ? pr.replace('class="prompt"', 'class="prompt float" role="dialog"') : '');
 }
 function promptHTML() {
   const v = controller(), pd = S.pending, P = S.players[v];
@@ -1927,6 +1938,12 @@ function handleAction(e, onCard) {
     // 온라인에서 상대 차례에는 게임 조작을 막음 (보기 기능은 허용)
     if (!myControl() && !['view', 'viewMode', 'side', 'closeView', 'cancel'].includes(k)) { toast = '상대가 진행할 차례예요'; return render(); }
     if (k === 'next') return dispatch({ type: 'NEXT_PHASE' });
+    if (k === 'endTurn') {
+      const t0 = S.turnCount;
+      dispatch({ type: 'NEXT_PHASE' });
+      if (S.turnCount === t0 && S.phase === 'attack' && !S.pending && myControl()) dispatch({ type: 'NEXT_PHASE' });
+      return;
+    }
     if (k === 'keep') return dispatch({ type: 'MULLIGAN', redraw: false });
     if (k === 'redraw') return dispatch({ type: 'MULLIGAN', redraw: true });
     if (k === 'noBlock') return dispatch({ type: 'BLOCK', blocker: null });
