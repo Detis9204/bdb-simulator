@@ -69,6 +69,9 @@ def parse_icon(line):
     return ('icon', {'cond': cond, 'eff': eff}) if cond and eff else None
 
 
+_LAND = set(json.load(open(ROOT / 'data' / 'territory_landscape.json', encoding='utf-8'))['ids']) if (ROOT / 'data' / 'territory_landscape.json').exists() else set()
+
+
 def to_def(c):
     d = {'jp': c['id'], 'name': c['name'], 'color': c['color'], 'type': c['type'], 'cost': c['cost'],
          'attr': c.get('attr') or [], 'titles': c.get('titles') or [], 'icons': [], 'gen': 1}
@@ -96,6 +99,8 @@ def to_def(c):
                 d['icons'].append(r[1])
                 continue
         rest.append(line)
+    if c['type'] == 'territory' and c['id'] in _LAND:
+        d['land'] = 1   # 앞면 그림이 가로
     if c['type'] == 'territory':
         d['tfx'] = {'text': ' / '.join(rest) or '(효과 없음)'}
         k = [ko(x) for x in rest]
