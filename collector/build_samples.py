@@ -104,8 +104,31 @@ def to_def(c):
     return d
 
 
+def export_db(cards):
+    """덱 편성용 전체 카드 정의 -> simulator/cards_db.json (게시 페이지에서 cards_db.json 으로 불러옴)"""
+    collabs, defs, base = [], {}, []
+    for cid in sorted(cards):
+        c = cards[cid]
+        d = to_def(c)
+        cn = c.get('collabName') or ''
+        if cn not in collabs:
+            collabs.append(cn)
+        d['cb'] = collabs.index(cn)
+        if c.get('rarity'):
+            d['r'] = c['rarity']
+        if c.get('base') and c['base'] != cid:
+            d['b'] = c['base']
+        else:
+            base.append(cid)
+        defs[str(cid)] = d
+    out = ROOT / 'simulator' / 'cards_db.json'
+    out.write_text(json.dumps({'v': 1, 'collabs': collabs, 'base': base, 'defs': defs}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    print(f'전체 카드 {len(defs)}장 (기본 {len(base)}종) -> {out.name} {out.stat().st_size // 1024}KB')
+
+
 def main():
     cards = {c['id']: c for c in json.load(open(CARDS, encoding='utf-8'))}
+    export_db(cards)
     src = json.load(open(DECKS, encoding='utf-8'))
     pick = src.get('samples') or [d['hashid'] for d in src['decks']]
     decks = {d['hashid']: d for d in src['decks']}
