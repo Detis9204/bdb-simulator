@@ -51,6 +51,7 @@ _DESC_TOKENS = [
     (r'【(?!スキル|ブライト|コスプレ|デコイ|ブリッツ|バーサーク)([^】]+)】を持つ', lambda m, f: f.__setitem__('kwText', m.group(1))),
     (r'【(マギア|マケイン|ログ)】を持つ', lambda m, f: f.__setitem__({'マギア': 'magia', 'マケイン': 'makein', 'ログ': 'log'}[m.group(1)], 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
+    (r'アタックして', lambda m, f: None),
     (r'(ハート|スペード|ダイヤ|クラブ)の', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【(デコイ|ブリッツ|バーサーク)】を持つ', lambda m, f: f.__setitem__('kw', {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group(1)])),
     (r'パワーがこのユニット(?:のパワー)?以下の', lambda m, f: f.__setitem__('powLE_self', 1)),
@@ -130,6 +131,8 @@ def subj(t):
         return 'T'
     if t == TO_SELF or t == 'このカード':
         return 'self'
+    if t in ('あなたのドロップゾーンからこのカード', 'ドロップゾーンからこのカード', 'ドロップしたこのカード'):
+        return 'card'
     if t in ('ドロップゾーンのこのカード', 'あなたのドロップゾーンのこのカード', 'ドロップゾーンからそのカード', 'ドロップゾーンのそのカード'):
         return 'T' if 'その' in t else 'card'
     if t in ('ドロップゾーンのこのカード', 'あなたのドロップゾーンのこのカード'):
@@ -335,6 +338,23 @@ def eff_patterns():
     add(r'あなたの手札を(?P<n>\d+)枚リムーブ' + V('する', 'し') + MAY + END, lambda m: {'op': 'pick', 'from': 'hand', 'to': 'remove', 'f': {}, 'n': int(m.group('n')), 'upto': 1 if m.group('may') else 0})
     add(r'あなたの(?P<z>ドロップゾーン|手札|エナジーゾーン)の、?' + DESC + r'(?:' + NOUN[:-1] + r'))?を(?P<n>\d+)枚、コストを払わず(?:に)?プレイ' + V('する', 'し') + MAY + END,
         lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': {'ドロップゾーン': 'drop', '手札': 'hand', 'エナジーゾーン': 'energy'}[m.group('z')], 'f': noun_filter(f, m.group('noun')), 'may': 1})(parse_desc(m.group('d'))))
+    MV = {'手札に戻': 'bounce', '山札の下に置': 'deckBottom', '山札の上に置': 'deckTop', 'ライフの先頭に置': 'life', 'エナジーゾーンに置': 'energy', 'ドロップさせ': 'drop', 'リムーブ': 'remove'}
+    LB = {'bounce': '패로 되돌림', 'deckBottom': '덱 맨 아래', 'deckTop': '덱 맨 위', 'life': '라이프 맨 앞', 'energy': '에너지 존', 'drop': '드롭', 'remove': '리무브'}
+    def or_move(m):
+        a, b = MV[m.group('a')], MV[m.group('b')]
+        return {'op': 'choose', 'opts': [[{'op': a, 'to': 'T'}], [{'op': b, 'to': 'T'}]], 'labels': [LB[a], LB[b]]}
+    alts = '|'.join(MV)
+    add(r'対象を、?(?P<a>' + alts + r')(?:す|く|る|)か(?P<b>' + alts + r')' + V('す', 'く', 'る', 'する', '') + END, or_move)
+    add(r'(?P<to>対象|このユニット)に(?P<src>このユニット|対象)のパワー(?:分の|と同じ)ダメージを与え' + V('る', '') + END,
+        lambda m: {'op': 'dmgPow', 'to': subj(m.group('to')), 'from': subj(m.group('src'))})
+    add(r'(?:あなたは)?(?P<n>\d+)枚引いて(?P<k>\d+)枚ドロップ' + V('する', 'し') + END, lambda m: [{'op': 'draw', 'n': int(m.group('n'))}, {'op': 'discard', 'n': int(m.group('k'))}])
+    add(r'(?P<d>[^、。]*?)ユニットを望む枚数対象と' + V('し', 'する') + END,
+        lambda m: (lambda f: f is not None and {'op': 'tgt', 'f': {**f, 'type': 'unit'}, 'n': 99, 'upto': 1})(parse_desc(m.group('d'))))
+    add(r'(?P<d>[^、。]*?)ユニットを望む枚数対象とし、(?P<n>\d+)ダメージ' + END,
+        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'f': {**f, 'type': 'unit'}, 'n': 99, 'upto': 1}, {'op': 'dmg', 'n': int(m.group('n')), 'to': 'T'}])(parse_desc(m.group('d'))))
+    add(r'レストで登場させ' + V('る', '') + END, lambda m: {'op': 'summonRested', 'to': 'T'})
+    add(r'対象は互いのパワー分、ダメージを与えあう' + END, lambda m: {'op': 'fight'})
+    add(r'(?P<n>[+-]\d+)' + END, lambda m: {'op': '$prevop', 'n': int(m.group('n')), 'to': '$prev'})
     # 라이프 맨 앞 보기 / 공개
     add(r'あなたのライフの先頭を見る' + END, lambda m: {'op': 'peekLife'})
     # 배틀 상대 중 조건에 맞으면 드롭
@@ -536,6 +556,11 @@ def parse_cond(t):
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
         (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
         (r'相手が引かなかった', lambda m: {'oppDeclined': 1}),
+        (r'このターン(?:に)?相手がダメージを受けている', lambda m: {'oppDmgTurn': 1}),
+        (r'対象がエース', lambda m: {'tF': {'ace': 1}}),
+        (r'対象が(?P<d>[^、。]*?)(?:エースカード|ユニットカード|カード|ユニット)', lambda m: (lambda f: f is not None and {'tF': {**f, **({'ace': 1} if 'エース' in m.group(0) else {})}})(parse_desc(m.group('d')))),
+        (r'各プレイヤーのライフの枚数が同じ', lambda m: {'lifeEq': 1}),
+        (r'エースカードをドロップした', lambda m: {'milled': {'ace': 1}}),
         (r'相手のエナジーがあなたのエナジーより(?P<n>\d+)枚以上多い', lambda m: {'oppEnergyMore': int(m.group('n'))}),
         (r'あなたのユニットの枚数が相手のユニットの枚数以下', lambda m: {'unitsLE': 1}),
         (r'このユニットのパワーが(?P<n>\d+)以上', lambda m: {'selfPowGE': int(m.group('n'))}),
@@ -814,6 +839,17 @@ TRIGGERS = [
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
     (r'このユニットがレストで登場した時', ('enter', 'self', {'enteredRested': 1})),
+    (r'このユニットでテリトリーを開放した時', ('terrOpen', 'self', None)),
+    (r'このユニットが効果で登場した時', ('enter', 'self', {'notPlayed': 1})),
+    (r'このユニットがエナジーゾーンから登場した時', ('enter', 'self', {'fromEnergy': 1})),
+    (r'このカードを【ブライト】でドロップした時|このカードが【ブライト】で手札からドロップされた時', ('brightDrop', 'self', None)),
+    (r'あなたのエースがフィールドからドロップした時', ('leave', 'ownAce', None)),
+    (r'このユニットがフィールドからドロップされた時', ('leave', 'self', None)),
+    (r'このカードがフィールドからリムーブされた時', ('removed', 'self', None)),
+    (r'あなたのユニットが卒業した時', ('graduate', 'own', None)),
+    (r'このユニットがブロックした時', ('block', 'self', None)),
+    (r'あなたの他のユニットがブロックしてバトルする時', ('block', 'own', {'evNotSelf': 1})),
+    (r'このユニットが【(?P<n>[^】]+)】を着た時', ('dressed', 'self', None)),
     (r'このユニットが【ブライト】してバトルに勝利した時', ('win', 'self', {'brightWin': 1})),
     (r'このユニットが相手ターンにバトルする時', ('battle', 'self', {'oppTurnX': 1})),
     (r'ダメージでこのカードがライフからドロップした時', ('lifeDmgDrop', 'self', None)),
@@ -833,7 +869,7 @@ TRIGGERS = [
     (r'(?:あなたのターン中、)?あなたのユニットが【スキル】を発動した時', ('skillUsed', 'own', None)),
     (r'このユニットがレストした時', ('rest', 'self', None)),
     (r'ユニットにつけたこのカードがドロップした時', ('attDrop', 'self', None)),
-    (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットがアタックした時', ('attack', 'desc', None)),
+    (r'(?P<w>あなた|相手)の(?P<d>[^、。]*?)ユニットがアタックした時', ('attack', 'desc', None)),
     (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットが(?:フィールドから)?ドロップした時', ('leave', 'desc', None)),
     (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットが登場した時', ('enter', 'desc', None)),
     (r'このユニットが【ブライト】した時', ('bright', 'self', None)),
@@ -849,6 +885,9 @@ def parse_trigger(t):
     """'あなたのテリトリー開放中にこのユニットが登場した時' -> (on, src, conds) | None"""
     conds = []
     t = re.sub(r'」テリトリー', '」のテリトリー', t)
+    if t.startswith('あなたのターンに'):
+        conds.append({'myTurn': 1})
+        t = t[len('あなたのターンに'):]
     m = re.match(r'(?P<c>あなたの、称号「[^」]+」か(?:称号)?「[^」]+」のテリトリー開放中|あなたの(?:称号「[^」]+」の)?テリトリー(?:開放中|が開放されていて)|あなたのライフがレッドゾーンで)(?:に|、|で、|で)?', t)
     if m:
         c = parse_cond(m.group('c').replace('が開放されていて', '開放中').rstrip('で'))
@@ -886,6 +925,9 @@ def parse_trigger(t):
                 extra = {'any': 1}
             if extra and 'oppTurnX' in extra:
                 conds.append({'oppTurn': 1})
+                extra = None
+            if extra and ('notPlayed' in extra or 'fromEnergy' in extra or 'evNotSelf' in extra):
+                conds.append(extra)
                 extra = None
             if extra and ('enteredRested' in extra or 'attackedTurn' in extra):
                 conds.append(extra)
@@ -1485,6 +1527,13 @@ def parse_body(ln, d, skill):
 
 def _parse_body(ln, d, skill):
     gk = False
+    m0 = re.match(r'^((?:⁅保持称号開放中⁆)?)【相棒】⁅(ハート|スペード|ダイヤ|クラブ)⁆(?:\([^)]*\))?', ln)
+    if m0:   # 相棒: 내 다른 지정 속성 유닛이 있으면 유효
+        d['aibou'] = m0.group(2)
+        r = _parse_body2(m0.group(1) + ln[m0.end():], d, skill)
+        if r:
+            r['if'] = r.get('if', []) + [{'exists': {'side': 'own', 'attr': [m0.group(2)], 'notSelf': 1, 'type': 'unit'}}]
+        return r
     m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET3\.0|特記事項(\d+)|怪異:([^】]+)|境界-([^】]+))】(?:\([^)]*\))?', ln)
     kc = None
     if m:   # 조건이 맞을 때만 유효한 작품 키워드
