@@ -46,6 +46,7 @@ _DESC_TOKENS = [
     (r'【コスプレ】を持つ', lambda m, f: f.__setitem__('cos', 1)),
     (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
     (r'【夢を見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
+    (r'【(マギア|マケイン|ログ)】を持つ', lambda m, f: f.__setitem__({'マギア': 'magia', 'マケイン': 'makein', 'ログ': 'log'}[m.group(1)], 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
     (r'(ハート|スペード|ダイヤ|クラブ)の', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【(デコイ|ブリッツ|バーサーク)】を持つ', lambda m, f: f.__setitem__('kw', {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group(1)])),
@@ -271,6 +272,7 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    add(r'あなたの裏のエナジーを(?P<n>\d+)枚(?:まで)?表に' + V('する', 'し') + END, lambda m: {'op': 'unflipEnergy', 'n': int(m.group('n'))})
     def at_end(m):
         sub = parse_effects(m.group('x'))
         return sub and {'op': 'delay', 'at': 'attackEnd', 'do': sub}
@@ -664,6 +666,7 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'あなたのエースが【マギア】でエナジーを裏にした時', ('magiaFlip', 'ownAce', None)),
     (r'このカードを【夢を見ない】で公開してドロップした時', ('yumemiDrop', 'self', None)),
     (r'このユニットの【CAD】でコマンドを解決した時', ('cad', 'self', None)),
     (r'あなたが【CAD】でコマンドを解決した時', ('cad', 'own', None)),
@@ -996,6 +999,44 @@ def parse_card(d):
             done.add(i)
             i += 1
             continue
+        # 【マギア】: 공격 시 에너지 2장을 뒷면으로 해서 발동 / 【マケイン】: 배틀에서 졌을 때 / 【ログ】: 등장 시 덱 위를 뒷면으로 테리토리에
+        m = re.fullmatch(r'(?P<h>⁅保持称号開放中⁆)?【(?P<k>マギア|マケイン)】(?:\([^)]*\))?(?P<x>.*)', ln)
+        if m:
+            k = m.group('k')
+            d['magia' if k == 'マギア' else 'makein'] = 1
+            body = m.group('x')
+            if re.fullmatch(r'以下を1つ(?:選んで)?行う。?', body):
+                j = i + 1
+                opts = []
+                while j < len(lines) and lines[j].startswith('・'):
+                    opts.append(parse_effects(lines[j][1:]))
+                    j += 1
+                sub = [{'op': 'choose', 'opts': opts}] if opts and all(o is not None for o in opts) else None
+                rng = list(range(i, j))
+            else:
+                _LAST.clear()
+                sub = parse_effects(body) if body else []
+                if sub is not None and '$prev' in str(sub):
+                    sub = None
+                rng = [i]
+                j = i + 1
+            on = 'attack' if k == 'マギア' else 'lose'
+            if sub is not None:
+                ab = {'k': 'auto', 'on': on, 'src': 'self', 'if': [{'hold': 1}] if m.group('h') else [], 'do': sub, 'li': rng}
+                if k == 'マギア':
+                    ab['cost'] = [{'op': 'flipEnergy', 'n': 2, 'inCost': 1}]
+                abs_.append(ab)
+                done.update(rng)
+            else:
+                mts.append({'on': on, 'src': 'self', 'if': [], 'li': rng})
+            i = j
+            continue
+        if re.fullmatch(r'【ログ】(?:\(.*\))?', ln):
+            d['log'] = 1
+            abs_.append({'k': 'auto', 'on': 'enter', 'src': 'self', 'if': [], 'do': [{'op': 'logAttach', 'may': 1}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
         # 【夢を見ない】〔색/속성〕: 공격 시 덱 위 1장을 공개해서 드롭할 수 있고, 지정 색·속성이면 효과 발동
         m = re.fullmatch(r'(?P<h>⁅保持称号開放中⁆)?【夢を見ない】〔(?P<spec>[^〕]+)〕(?:\([^)]*\))?:?(?P<x>.+)', ln)
         if m:
@@ -1150,14 +1191,14 @@ def parse_body(ln, d, skill):
 
 def _parse_body(ln, d, skill):
     gk = False
-    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【我駆力】(?:\([^)]*\))?', ln)
-    if m:   # 我駆力: 이번 턴 어느 플레이어든 데미지를 받았으면 유효
-        gk = True
-        d['gaku'] = 1
+    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET3\.0)】(?:\([^)]*\))?', ln)
+    if m:   # 我駆力: 이번 턴 데미지가 있었으면 유효 / INTERNET3.0: 레스트한 에너지가 3색 이상이면 유효
+        gk = m.group(2)
+        d['gaku' if gk == '我駆力' else 'net3'] = 1
         ln = m.group(1) + ln[m.end():]
     r = _parse_body2(ln, d, skill)
     if r and gk:
-        r['if'] = r.get('if', []) + [{'dmgTurn': 1}]
+        r['if'] = r.get('if', []) + [{'dmgTurn': 1} if gk == '我駆力' else {'net3': 1}]
     return r
 
 
