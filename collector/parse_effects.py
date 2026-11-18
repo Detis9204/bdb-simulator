@@ -47,6 +47,7 @@ _DESC_TOKENS = [
     (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
     (r'【夢を見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
     (r'⁅神衣⁆を持つ', lambda m, f: f.__setitem__('kamui', 1)),
+    (r'【ブライト】を持たない', lambda m, f: f.__setitem__('noBright', 1)),
     (r'【(?!スキル|ブライト|コスプレ|デコイ|ブリッツ|バーサーク)([^】]+)】を持つ', lambda m, f: f.__setitem__('kwText', m.group(1))),
     (r'【(マギア|マケイン|ログ)】を持つ', lambda m, f: f.__setitem__({'マギア': 'magia', 'マケイン': 'makein', 'ログ': 'log'}[m.group(1)], 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
@@ -303,6 +304,8 @@ def eff_patterns():
     add(r'(?:そのターン中、)?対象がドロップする際、代わりにリムーブ' + V('する', 'し') + END, lambda m: {'op': 'kw', 'kw': 'exile', 'to': 'T'})
     add(r'相手は対象を(?P<r>レストで)?登場させ' + V('る', '') + END, lambda m: {'op': 'summonRested' if m.group('r') else 'summon', 'to': 'T'})
     add(r'対象とこのユニットを(?P<st>スタンドで)?入れ替え' + V('る', '') + END, lambda m: {'op': 'swapT', **({'stand': 1} if m.group('st') else {})})
+    add(r'あなたのエナジーを(?P<n>\d+)枚、?(?:望む順で)?山札の下に置' + V('く', 'き', 'い') + END, lambda m: {'op': 'pick', 'from': 'energy', 'to': 'bottom', 'f': {}, 'n': int(m.group('n')), 'upto': 0})
+    add(r'(?:そのターン中、)?相手のユニット全ては可能な限りブロックする' + END, lambda m: {'op': 'kw', 'kw': 'mustBlock', 'to': {'all': {'side': 'opp', 'type': 'unit'}}})
     # 라이프 맨 앞 보기 / 공개
     add(r'あなたのライフの先頭を見る' + END, lambda m: {'op': 'peekLife'})
     # 배틀 상대 중 조건에 맞으면 드롭
@@ -608,6 +611,7 @@ def _mark_may(steps):
 
 def parse_effects(t):
     """효과 문장들 -> 단계 목록 | None. 「~てよい」 문장은 실행 전에 쓸지 묻도록 may 표시"""
+    t = re.sub(r'(ユニット)を全て', r'\1全てを', t)
     out = []
     sents = []
     for x in [x for x in t.split('。') if x.strip()]:
@@ -667,14 +671,14 @@ def _parse_seq(t, steps=None):
             t = t[m.end():]
             continue
         # 「~1枚につき、」: 다음 효과의 수치를 개수만큼 곱함
-        m = re.match(r'(?P<w>あなたの|相手の)(?P<z>手札|エナジー|ドロップゾーン(?:のカード)?|ユニット|エナジーの色)(?P<k>\d+)(?:枚|つ)につき、|対象のヒット(?P<h>\d+)につき、', t)
+        m = re.match(r'(?P<w>あなたの|相手の)(?P<z>手札|エナジー|ドロップゾーン(?:のカード)?|ユニット|エナジーの色|リムーブゾーン)(?P<k>\d+)(?:枚|つ)につき、|対象のヒット(?P<h>\d+)につき、', t)
         if m:
             sub = []
             j = t.find('。')
             inner, rest = (t[m.end():], '') if j < 0 else (t[m.end():j], t[j + 1:])
             if _parse_seq(inner, sub) is None:
                 return None
-            per = {'tHit': 1} if m.group('h') else {'side': 'opp' if m.group('w') == '相手の' else 'own', 'zone': {'手札': 'hand', 'エナジー': 'energy', 'ユニット': 'field', 'エナジーの色': 'colors'}.get(m.group('z'), 'drop'), 'k': int(m.group('k'))}
+            per = {'tHit': 1} if m.group('h') else {'side': 'opp' if m.group('w') == '相手の' else 'own', 'zone': {'手札': 'hand', 'エナジー': 'energy', 'ユニット': 'field', 'エナジーの色': 'colors', 'リムーブゾーン': 'remove'}.get(m.group('z'), 'drop'), 'k': int(m.group('k'))}
             for st in sub:
                 if st.get('op') not in ('tgt', 'if', 'choose'):
                     st['per'] = per
@@ -761,6 +765,7 @@ TRIGGERS = [
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
     (r'このユニットがレストで登場した時', ('enter', 'self', {'enteredRested': 1})),
+    (r'このユニットが相手ターンにバトルする時', ('battle', 'self', {'oppTurnX': 1})),
     (r'ダメージでこのカードがライフからドロップした時', ('lifeDmgDrop', 'self', None)),
     (r'あなたのユニットがバトルする時', ('battle', 'own', None)),
     (r'あなたのユニットがアタックしたターンのエンドフェイズ開始時', ('endStart', 'me', {'attackedTurn': 1})),
@@ -793,6 +798,7 @@ TRIGGERS = [
 def parse_trigger(t):
     """'あなたのテリトリー開放中にこのユニットが登場した時' -> (on, src, conds) | None"""
     conds = []
+    t = re.sub(r'」テリトリー', '」のテリトリー', t)
     m = re.match(r'(?P<c>あなたの、称号「[^」]+」か(?:称号)?「[^」]+」のテリトリー開放中|あなたの(?:称号「[^」]+」の)?テリトリー(?:開放中|が開放されていて)|あなたのライフがレッドゾーンで)(?:に|、|で、|で)?', t)
     if m:
         c = parse_cond(m.group('c').replace('が開放されていて', '開放中').rstrip('で'))
@@ -825,6 +831,9 @@ def parse_trigger(t):
                     continue
                 src = 'own' if m.group('w') == 'あなた' else 'opp'
                 conds.append({'evF': f})
+            if extra and 'oppTurnX' in extra:
+                conds.append({'oppTurn': 1})
+                extra = None
             if extra and ('enteredRested' in extra or 'attackedTurn' in extra):
                 conds.append(extra)
                 extra = None
@@ -1266,6 +1275,18 @@ def parse_card(d):
         m = re.fullmatch(r'⁅永続⁆このカードは全(?:ての)?領域で称号「([^」]+)」(?:と称号「([^」]+)」)?を持つ。?', ln)
         if m:
             d['titles'] = list(dict.fromkeys((d.get('titles') or []) + [x for x in m.groups() if x]))
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'このカードはデッキに(\d+)枚まで入れられる。?', ln)
+        if m:
+            d['maxCopies'] = int(m.group(1))
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'⁅永続⁆(?:このユニット|このカード)は(?:全ての領域で)?(?:カード名を)?「([^」]+)」(?:として|としても)扱う。?(?:\(.*\))?', ln)
+        if m:
+            d['alias'] = m.group(1)
             done.add(i)
             i += 1
             continue
