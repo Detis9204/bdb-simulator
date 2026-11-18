@@ -15,6 +15,8 @@ N = lambda t: unicodedata.normalize('NFKC', t)
 _DESC_TOKENS = [
     (r'⁅?(?:ハート|スペード|ダイヤ|クラブ)⁆?(?:か⁅?(?:ハート|スペード|ダイヤ|クラブ)⁆?)+(?:の)?', lambda m, f: f.__setitem__('attr', re.findall('ハート|スペード|ダイヤ|クラブ', m.group(0)))),
     (r'相手の', lambda m, f: f.__setitem__('side', 'opp')),
+    (r'、', lambda m, f: None),
+    (r'属性(\d)つの', lambda m, f: f.__setitem__('attrN', int(m.group(1)))),
     (r'あなたの', lambda m, f: f.__setitem__('side', 'own')),
     (r'このユニット以外の|他の', lambda m, f: f.__setitem__('notSelf', 1)),
     (r'総?コスト(\d+)以下(?:の|で)', lambda m, f: f.__setitem__('costLE', int(m.group(1)))),
@@ -299,6 +301,7 @@ def eff_patterns():
         lambda m: {'op': 'mill', 'n': int(m.group('n')), **({'may': 1} if m.group('may') or m.group('upto') else {})})
     add(r'(?:あなたは)?(?P<n>\d+)枚引いてよい' + END, lambda m: {'op': 'draw', 'n': int(m.group('n')), 'may': 1})
     add(r'相手のライフの先頭をドロップ' + V('する', 'し', 'させる', 'させ') + END, lambda m: {'op': 'lifeDrop', 'n': 1, 'who': 'opp'})
+    add(r'相手のライフの先頭を墓地に置' + V('く', 'き') + END, lambda m: {'op': 'lifeDrop', 'n': 1, 'who': 'opp'})
     add(r'(?:あなたの)?山札(?:を|の)上から(?P<n>\d+)枚、?(?:を)?(?P<z>ライフ(?:ゾーン)?の先頭|エナジーゾーン)に置' + V('く', 'き', 'い') + END,
         lambda m: {'op': 'lifeTop' if 'ライフ' in m.group('z') else 'deckEnergy', 'n': int(m.group('n'))})
     add(r'(?:あなたの)?山札をシャッフルして上から(?P<n>\d+)枚(?:を)?ライフ(?:ゾーン)?の先頭に置' + V('く', 'き', 'い') + END, lambda m: {'op': 'lifeTop', 'n': int(m.group('n')), 'shuffle': 1})
@@ -516,6 +519,14 @@ def eff_patterns():
 EFF = eff_patterns()
 
 # ---------- 조건 ----------
+def _pair(a, b):
+    """「「日向」を含むカードと「ユイ」を含むカード」 / 「青と赤のエースカード」 -> 두 묘사"""
+    noun = re.search(r'(エースカード|ユニットカード|コマンドカード|カード)$', b)
+    if noun and not re.search(r'(カード)$', a):
+        return a + 'の' + noun.group(1), b
+    return a, b
+
+
 def _zdesc(d):
     """장수 조건의 카드 묘사 -> 필터 (없으면 전부)"""
     if not d:
@@ -539,14 +550,30 @@ def parse_cond(t):
     t = t.strip('、')
     if t.endswith('てい'):
         t += 'る'
+    t = re.sub(r'クラスカードが(\d+)枚以上ついたこのユニットがレストしている', r'このユニットにつけたクラスカードが\1枚以上かつこのユニットがレストしている', t)
     if t.startswith('あなたの、'):   # 「あなたの、手札が1枚以下でテリトリー開放中」
-        t = '、'.join('あなたの' + x if not x.startswith(('あなた', '相手')) else x for x in re.split(r'で(?=テリトリー|ライフ|手札|ドロップ|エナジー)|いて(?=テリトリー)', t[5:]))
-        t = re.sub(r'(?<=いる)、|(?<=以下)、|(?<=以上)、', 'かつ', t)
+        xs = re.split(r'で(?=テリトリー|ライフ|手札|ドロップ|エナジー|称号|リムーブ|フィールド)|(?<=がい)て(?=テリトリー)', t[5:])
+        xs = [x + 'る' if x.endswith('がい') else x for x in xs]
+        t = 'かつ'.join('あなたの' + x if not x.startswith(('あなた', '相手')) else x for x in xs)
     t = re.sub(r'が開放されていて、', 'が開放されているかつ', t)
     t = re.sub(r'引いていた$', '引いている', t)
-    t = re.sub(r'(ユニット)がいて、?', r'\1がいるかつ', t)
+    t = re.sub(r'(ユニット|エース)がいて、?', r'\1がいるかつ', t)
     _LAST.setdefault('cond', None)
     C = [
+        (r'このターン(?:に)?あなたがコマンドをプレイしてい(?:る|た)', lambda m: {'cmdTurn': 1}),
+        (r'このターン(?:に)?あなたのカードがリムーブされてい(?:る|た)', lambda m: {'removedTurn': 1}),
+        (r'あなたのユニットが合計(?P<n>\d+)色(?:以上)?', lambda m: {'unitColorsGE': int(m.group('n'))}),
+        (r'相手のメインフェイズ(?:中)?', lambda m: {'oppTurn': 1, 'phase': 'main'}),
+        (r'あなたのメインフェイズ(?:中)?', lambda m: {'myTurn': 1, 'phase': 'main'}),
+        (r'このユニットがエースとバトルする', lambda m: {'battleVsAce': 1}),
+        (r'あなたの「(?P<n>[^」]+)」が開放中', lambda m: {'terrName': m.group('n')}),
+        (r'あなたのドロップゾーンにある称号が合計(?P<n>\d+)種類以上', lambda m: {'dropTitlesGE': int(m.group('n'))}),
+        (r'あなたの(?P<z>ドロップゾーン|リムーブゾーン)に(?:カード名に、)?(?P<a>[^、。]+?)と(?P<b>[^、。]+?)がそれぞれある',
+         lambda m: (lambda Z, fa, fb: fa is not None and fb is not None and {'zcAll': [{'side': 'own', 'zone': Z, 'f': fa, 'n': 1, 'cmp': 'ge'}, {'side': 'own', 'zone': Z, 'f': fb, 'n': 1, 'cmp': 'ge'}]})(
+             m.group('z'), _zdesc(_pair(m.group('a'), m.group('b'))[0]), _zdesc(_pair(m.group('a'), m.group('b'))[1]))),
+        (r'あなたのフィールドかドロップゾーンに(?P<d>[^、。]+?)がある', lambda m: (lambda f: f is not None and {'zc': {'side': 'own', 'zones': ['field', 'drop'], 'f': f, 'n': 1, 'cmp': 'ge'}})(_zdesc(m.group('d')))),
+        (r'あなたの(?P<z>ドロップゾーン|リムーブゾーン)に(?P<d>[^、。]+?)が(?P<n>\d+)(?P<k>枚|種類)(?:以上)?ある', lambda m: (lambda f: f is not None and {'zc': {'side': 'own', 'zone': m.group('z'), 'f': f, 'n': int(m.group('n')), 'cmp': 'ge', **({'kinds': 1} if m.group('k') == '種類' else {})}})(_zdesc(m.group('d')))),
+        (r'あなたの(?P<d>[^、。]+?)エナジーが(?:合計)?(?P<n>\d+)枚以上', lambda m: (lambda f: f is not None and {'zc': {'side': 'own', 'zone': 'エナジー', 'f': f, 'n': int(m.group('n')), 'cmp': 'ge'}})(_zdesc(m.group('d')))),
         (r'(?:あなたの)?ライフがレッドゾーン', lambda m: {'red': 1}),
         (r'相手のユニットがあなたより多い', lambda m: {'oppMore': 1}),
         (r'相手のユニットの枚数があなたのユニット以上', lambda m: {'oppGE': 1}),
@@ -554,7 +581,7 @@ def parse_cond(t):
         (r'山札から(?P<d>[^、。]*?)をドロップした?', lambda m: {'milled': parse_desc(m.group('d').replace('バスターアイコン', 'バスターの'))}),
         (r'(?:ドロップ|それ)しない|そうしない', lambda m: {'did': 0}),
         (r'あなたのドロップゾーンの(?P<d>[^、。]*?)(?:ユニットカード|カード)?が(?P<n>\d+)枚以上', 'count'),
-        (r'(?:さらに)?(?P<n>\d+)枚以上', 'again'),
+        (r'(?:さらに)?(?P<n>\d+)枚(?:以上|以下)?', 'again'),
         (r'相手のライフがレッドゾーン', lambda m: {'oppRed': 1}),
         (r'あなたのテリトリー(?:が開放されている|開放中)', lambda m: {'terr': 1}),
         (r'あなたの称号「(?P<t>[^」]+)」のテリトリー(?:が開放されている|開放中)', lambda m: {'terrTitle': m.group('t')}),
@@ -603,7 +630,7 @@ def parse_cond(t):
         (r'このターン(?:に)?あなたがダメージを受けている', lambda m: {'meDmgTurn': 1}),
         (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
         (r'このターン(?:に)?あなたの他のユニットが登場している', lambda m: {'otherEntered': 1}),
-        (r'(?:あなたの、)?つけた契約書が(?P<n>\d+)枚以上', lambda m: {'contractGE': int(m.group('n'))}),
+        (r'(?:あなたの、?)?つけた契約書が(?P<n>\d+)枚以上', lambda m: {'contractGE': int(m.group('n'))}),
         (r'あなたのドロップゾーンに(?P<d>[^、。]+?)がある', lambda m: (lambda f: f is not None and {'zoneHas': {'zone': 'drop', 'f': f}})(parse_desc(m.group('d') + 'の') if parse_desc(m.group('d') + 'の') is not None else _zdesc(m.group('d')))),
         (r'バトル相手が(?P<c>赤|青|白|黒)', lambda m: {'vsF': {'color': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]]}}),
         (r'このユニットにつけたクラスカードが(?P<n>\d+)枚以上', lambda m: {'selfClassGE': int(m.group('n'))}),
@@ -653,7 +680,7 @@ def parse_cond(t):
                     k, v = next(iter(prev.items()))
                     if isinstance(v, dict):
                         c = {k: {**v, 'n': int(m.group('n'))}}
-                    elif k.endswith('GE'):
+                    elif k.endswith('GE') or k.endswith('LE'):
                         c = {k: int(m.group('n'))}
                     else:
                         return None
@@ -677,7 +704,7 @@ def parse_cond(t):
                     c = fn(m)
                     if not c:
                         return None
-                    if any(k.endswith('GE') for k in c):
+                    if any(k.endswith('GE') or k.endswith('LE') for k in c):
                         _LAST['cond'] = c
                     out.append(c)
                 break
@@ -1279,9 +1306,25 @@ def parse_skill(line):
 # ---------- 상시 능력 ----------
 def parse_perm(t):
     """⁅永続⁆ 본문 -> {if:[...], do:[pow/hit/kw ...]} | None"""
+    t = re.sub(r'(\d+)億', lambda m: str(int(m.group(1)) * 100000000), t)
+    t = re.sub(r'(\d+)万', lambda m: str(int(m.group(1)) * 10000), t)
+    t = t.replace('。』', '』')
+    t = re.sub(r'各ターン1回まで、(このユニットはレストしていてもアタックできる)', r'\1', t)
+    t = re.sub(r'(を[+-]\d+)し、', r'\1。', t)
+    t = re.sub(r'(を[+-]\d+)、(?=相手は|このユニットは|あなたは|あなたの|パワーを\d+倍)', r'\1。', t)
+    # 규칙 문장
+    R = [(r'あなたがドローフェイズにカードを引く際、自分の手札が1枚以下なら、1枚引く代わりに(?:あなたの)?手札が3枚になるように引(?:く|いてよい)', 'drawTo3'),
+         (r'あなたのドロップゾーンのカードは他の領域に移動できない', 'dropLock')]
+    pre_rules = []
+    for rx, rule in R:
+        if re.search(rx, t):
+            pre_rules.append({'op': 'rule', 'rule': rule})
+            t = re.sub(rx + r'。?', '', t).strip('。')
+    if pre_rules and not t:
+        return {'if': [], 'do': pre_rules}
     conds = []
     for _ in range(3):
-        m = re.match(r'(?P<c>.+?)(?:なら|ていたら|中で|中|時)、', t)
+        m = re.match(r'(?P<c>.+?)(?:なら|ていたら|中で|中|時|際)、', t)
         if not m:
             break
         c = parse_cond(m.group('c').rstrip('で') + ('ている' if m.group(0).endswith('ていたら、') else ''))
@@ -1289,33 +1332,81 @@ def parse_perm(t):
             break
         conds += c
         t = t[m.end():]
-    out = []
+    out = list(pre_rules)
+    last = {}
     m0 = re.match(r'クラスカード(?:を持つ|がついた|がついている)(?=このユニット)', t)
     if m0:
         conds = conds + [{'selfHasClass': 1}]
         t = t[m0.end():]
     for sent in [x for x in t.split('。') if x]:
+        n0 = len(out)
         per = None
-        mp = re.match(r'あなたの(?P<z>エナジー|手札|ドロップゾーンのカード|ユニット|つけた契約書|つけたログ)(?P<k>\d+)枚につき、', sent)
+        sc = None
+        msc = re.match(r'(?P<c>[^、。]+?)(?:なら|ていたら)、(?:さらに)?', sent)
+        if msc:
+            cc = parse_cond(msc.group('c') + ('ている' if msc.group(0).rstrip('さらに').endswith('ていたら、') else ''))
+            if cc is not None:
+                sc = cc
+                sent = sent[msc.end():]
+        if re.fullmatch(r'[+-]\d+', sent) and last:   # 「さらに+1」: 앞과 같은 수정
+            out.append(dict(last, n=int(sent), **({'c': sc} if sc else {})))
+            continue
+        mp = re.match(r'あなたの(?P<z>エナジー|手札|ドロップゾーンのカード|ドロップゾーン|ユニット|つけた契約書|つけたログ)(?P<k>\d+)枚につき、', sent)
         if mp:
-            per = {'zone': {'エナジー': 'energy', '手札': 'hand', 'ドロップゾーンのカード': 'drop', 'ユニット': 'field', 'つけた契約書': 'contract', 'つけたログ': 'log'}[mp.group('z')], 'k': int(mp.group('k'))}
+            per = {'zone': {'エナジー': 'energy', '手札': 'hand', 'ドロップゾーンのカード': 'drop', 'ドロップゾーン': 'drop', 'ユニット': 'field', 'つけた契約書': 'contract', 'つけたログ': 'log'}[mp.group('z')], 'k': int(mp.group('k'))}
             sent = sent[mp.end():]
+        mp = re.match(r'(?:あなたのターン中、)?あなたの(?P<z>ドロップゾーンの)?(?P<d>[^、。]+?)(?P<noun>ユニット|カード)(?P<k>\d+)枚につき、', sent) if not per else None
+        if mp:
+            f = _zdesc(mp.group('d') + mp.group('noun'))
+            if f is not None:
+                per = {'zone': 'drop' if mp.group('z') else 'field', 'k': int(mp.group('k')), 'f': f}
+                sent = sent[mp.end():]
+        mp = re.match(r'このユニットのパワー(?P<k>\d+)につき、', sent) if not per else None
+        if mp:
+            per = {'selfPow': int(mp.group('k'))}
+            sent = sent[mp.end():]
+        sent = re.sub(r'^フィールドの', '', sent)
+        if re.match(r'【(?:デコイ|ブリッツ|バーサーク)】を得', sent):
+            sent = 'このユニットは' + sent
+        if re.match(r'(?:パワー|ヒット)を(?:[+-]\d+|\d+倍にする)$', sent) and last:   # 주어 생략: 앞 문장의 대상
+            sent = {'self': 'このユニット', 'host': 'このカードをつけたユニット'}.get(last.get('to'), 'このユニット') + 'の' + sent
+        r = _perm_sent(sent, per)
+        if r is None:
+            _FAIL['at'] = 'PERM:' + sent
+            return None
+        for st in r:
+            if sc:
+                st['c'] = sc
+        out += r
+        if r and r[-1].get('op') in ('pow', 'hit'):
+            last = {k: v for k, v in r[-1].items() if k != 'c'}
+    return {'if': conds, 'do': out} if out else None
+
+
+def _perm_sent(sent, per):
+    """영속 효과 한 문장 -> 단계 목록 | None"""
+    out = []
+    m = re.fullmatch(r'相手は(?P<d>[^、。]*?)ユニットではアタックができない', sent)
+    if m:
+        f = parse_desc('相手の' + m.group('d'))
+        return None if f is None else [{'op': 'kw', 'kw': 'noAttack', 'to': {'all': dict(f, type='unit')}}]
+    if True:
         sent = re.sub(r'^あなたの、', 'あなたの', sent)
-        m = re.fullmatch(r'(?P<to>[^、。]*?)の(?P<mods>(?:パワー|ヒット)を[+-]\d+(?:、(?:パワー|ヒット)を[+-]\d+)?)(?:する)?', sent)
+        m = re.fullmatch(r'(?P<to>[^。]*?)の(?P<mods>(?:パワー|ヒット)を[+-]\d+(?:、(?:パワー|ヒット)を[+-]\d+)?)(?:する)?', sent)
         if m and per:
             to = subj(m.group('to'))
             if not to:
                 return None
             for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods')):
                 out.append({'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': to, 'per': per})
-            continue
+            return out
         if m:
             to = subj(m.group('to'))
             if not to:
                 return None
             for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods')):
                 out.append({'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': to})
-            continue
+            return out
         m = re.fullmatch(r'(?P<to>[^、。]*?)は【(?P<k>デコイ|ブリッツ|バーサーク)】を得て、(?P<mods>(?:パワー|ヒット)を[+-]\d+)', sent)
         if m:
             to = subj(m.group('to'))
@@ -1324,11 +1415,18 @@ def parse_perm(t):
             out.append({'op': 'kw', 'kw': {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group('k')], 'to': to})
             for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods')):
                 out.append({'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': to})
-            continue
-        KWP = [(r'アタックもブロックもされない', ['noBeAttacked', 'unblockable']), (r'ユニットにアタックできない', ['noAttackUnit']), (r'他の能力を全て失う', ['blank']),
+            return out
+        KWP = [(r'アタックもブロックもされ(?:ず|ない)', ['noBeAttacked', 'unblockable']), (r'ユニットにアタックできない', ['noAttackUnit']), (r'他の能力を全て失う', ['blank']),
                (r'受けるダメージ全てを0にする', ['noDamage']), (r'ドロップ以外の方法でフィールドを離れない', ['stayField']), (r'コマンドの対象にならず', ['cmdImmune']),
                (r'アタックされ(?:ず|ない)', ['noBeAttacked']), (r'【デコイ】を無視してアタックでき(?:る)?', ['ignoreDecoy']), (r'ブロックされ(?:ず|ない)', ['unblockable']),
                (r'ブロックができ(?:ず|ない)', ['noBlock']), (r'アタックもブロックもできない', ['noAttack', 'noBlock']), (r'レストで登場する', ['enterRested']),
+               (r'可能な限りアタックする', ['mustAttack']), (r'手札に戻らず(?:、)?山札に置かれない', ['noBounce', 'noDeck']), (r'手札に戻らない', ['noBounce']),
+               (r'卒業できず(?:、)?リムーブされない', ['noGraduate', 'noRemove']), (r'相手の効果でレストしない', ['noOppRest']),
+               (r'(?:相手の)?エースにアタックされない', ['noAtkByAce']), (r'相手の効果の対象にならない', ['oppFxImmune']), (r'ユニットの効果の対象にならない', ['unitFxImmune']),
+               (r'相手のコマンドの対象にならない', ['cmdImmune']), (r'相手の効果でパワーが減少しない', ['noOppDebuff']), (r'【デコイ】を失い', ['loseDecoy']),
+               (r'(?:各ターン1回まで、)?レストしていてもアタックできる', ['attackRested']), (r'スタンドしているユニットにアタックできる', ['atkStand']),
+               (r'コマンドカードでも【ブライト】できる', ['brightCmdSelf']),
+               (r'(?:パワーを(?P<pw>[+-]\d+)(?:、|し、))', 'POW'), (r'(?:ヒットを(?P<ht>[+-]\d+)(?:、|し、)?)', 'HIT'),
                (r'【(デコイ|ブリッツ|バーサーク)】(?:と【(デコイ|ブリッツ|バーサーク)】)?を得(?:る|て)', None)]
         sent = re.sub(r'^このユニットが受けるダメージ全てを0にする$', 'このユニットは受けるダメージ全てを0にする', sent)
         mk = re.fullmatch(r'(?P<to>[^。]*?)(?:では|は)(?P<l>.+)', sent)
@@ -1339,7 +1437,9 @@ def parse_perm(t):
                 for rx, kk in KWP:
                     mm = re.match(rx + r'(?:、)?', rest_)
                     if mm:
-                        if kk is None:
+                        if kk in ('POW', 'HIT'):
+                            ks.append(('pow', int(mm.group('pw'))) if kk == 'POW' else ('hit', int(mm.group('ht'))))
+                        elif kk is None:
                             ks += [{'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[x] for x in mm.groups() if x]
                         else:
                             ks += kk
@@ -1348,15 +1448,15 @@ def parse_perm(t):
                 else:
                     break
             if not rest_ and ks:
-                out += [{'op': 'kw', 'kw': k, 'to': to} for k in ks]
-                continue
+                out += [{'op': k[0], 'n': k[1], 'to': to} if isinstance(k, tuple) else {'op': 'kw', 'kw': k, 'to': to} for k in ks]
+                return out
         mb = re.fullmatch(r'(?P<to>[^。]*?)は【ブライト(?P<n>\d+):(?P<a>[^】]+)】を得る', sent)
         if mb and subj(mb.group('to')):
             out.append({'op': 'kw', 'kw': 'bright:' + mb.group('n') + ':' + mb.group('a'), 'to': subj(mb.group('to'))})
-            continue
+            return out
         if re.fullmatch(r'相手はあなたのユニットのアタックを可能な限りブロックする', sent):
             out.append({'op': 'kw', 'kw': 'mustBlock', 'to': {'all': {'side': 'opp', 'type': 'unit'}}})
-            continue
+            return out
         m = re.fullmatch(r'(?P<to>[^、。]*?)は(?P<k>アタックされない|スタンドフェイズにスタンドしない|エースでないユニットにはアタックされない|スタンドしているユニットにアタックできる|レストで登場し、スタンドフェイズにスタンドしない)', sent)
         if m:
             to = subj(m.group('to'))
@@ -1365,13 +1465,13 @@ def parse_perm(t):
             out.append({'op': 'kw', 'kw': {'アタックされない': 'noBeAttacked', 'スタンドフェイズにスタンドしない': 'noStand', 'エースでないユニットにはアタックされない': 'aceOnlyAttack', 'スタンドしているユニットにアタックできる': 'atkStand', 'レストで登場し、スタンドフェイズにスタンドしない': 'noStand'}[m.group('k')], 'to': to})
             if 'レストで登場' in m.group('k'):
                 out.append({'op': 'kw', 'kw': 'enterRested', 'to': to})
-            continue
+            return out
         if re.fullmatch(r'あなたは(?:ライフが0枚でも)?ダメージで敗北しない', sent):
             out.append({'op': 'rule', 'rule': 'noLoseDmg'})
-            continue
+            return out
         if re.fullmatch(r'相手の手札上限は(\d+)枚になる', sent):
             out.append({'op': 'rule', 'rule': 'oppHand' + re.search(r'\d+', sent).group()})
-            continue
+            return out
         m = re.fullmatch(r'(?P<to>[^、。]*?)(?:は|では)(?P<k>アタックとブロックができない|アタックできない|アタックができない|ブロックができない|ブロックできない|ブロックされない)', sent)
         if m:
             to = subj(m.group('to'))
@@ -1379,20 +1479,86 @@ def parse_perm(t):
                 return None
             ks = {'アタックとブロックができない': ['noAttack', 'noBlock'], 'アタックできない': ['noAttack'], 'アタックができない': ['noAttack'], 'ブロックができない': ['noBlock'], 'ブロックできない': ['noBlock'], 'ブロックされない': ['unblockable']}[m.group('k')]
             out += [{'op': 'kw', 'kw': k, 'to': to} for k in ks]
-            continue
+            return out
         m = re.fullmatch(r'(?P<to>[^、。]*?)は(?P<n>\d+)ダメージでも受けるとドロップする', sent)
         if m and subj(m.group('to')):
             out.append({'op': 'kw', 'kw': 'fragile', 'to': subj(m.group('to'))})
-            continue
+            return out
         m = re.fullmatch(r'(?P<to>[^、。]*?)は【(?P<k>デコイ|ブリッツ|バーサーク)】を得る', sent)
         if m:
             to = subj(m.group('to'))
             if not to:
                 return None
             out.append({'op': 'kw', 'kw': {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group('k')], 'to': to})
-            continue
+            return out
+        # 그 밖의 영속 문장
+        sent2 = re.sub(r'^フィールドの', '', sent)
+        m = re.fullmatch(r'相手はこのユニットを、トリガーでプレイするコマンド以外で対象にできない', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'oppFxImmuneT', 'to': 'self'}]
+        m = re.fullmatch(r'相手はこのユニットのアタックを可能な限りブロックする', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'forceBlock', 'to': 'self'}]
+        m = re.fullmatch(r'このユニットは【ブリッツ】を得て、相手はこのユニットのアタックを可能な限りブロックする', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'blitz', 'to': 'self'}, {'op': 'kw', 'kw': 'forceBlock', 'to': 'self'}]
+        m = re.fullmatch(r'相手は(?P<d>[^、。]*?)ユニットではアタックができない', sent2)
+        if m:
+            f = parse_desc('相手の' + m.group('d'))
+            if f is not None:
+                return [{'op': 'kw', 'kw': 'noAttack', 'to': {'all': dict(f, type='unit')}}]
+        m = re.fullmatch(r'(?:クラスカードがついた)?このユニットがダメージを与えたユニットは、パワーに関わらずドロップされる', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'deathtouch', 'to': 'self'}]
+        if re.fullmatch(r'その際、そのユニットが持つ能力は全て発動しない', sent2):
+            return [{'op': 'kw', 'kw': 'deathtouchSilent', 'to': 'self'}]
+        m = re.fullmatch(r'このユニットはコスト(?P<n>\d+)のユニットにアタックされない', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'noAtkByCost:' + m.group('n'), 'to': 'self'}]
+        m = re.fullmatch(r'(?P<to>[^、。]*?)は【(?P<a>デコイ|ブリッツ|バーサーク)】と【(?P<b>デコイ|ブリッツ|バーサーク)】を得て、それらが受ける効果によるダメージを0にする', sent2)
+        if m and subj(m.group('to')):
+            to = subj(m.group('to'))
+            KM = {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}
+            return [{'op': 'kw', 'kw': KM[m.group('a')], 'to': to}, {'op': 'kw', 'kw': KM[m.group('b')], 'to': to}, {'op': 'kw', 'kw': 'noEffDmg', 'to': to}]
+        m = re.fullmatch(r'(?P<to>相手のユニット|あなたのユニット)が受けるダメージは2倍になる', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'dmgDouble', 'to': {'all': {'side': 'opp' if m.group('to').startswith('相手') else 'own', 'type': 'unit'}}}]
+        if re.fullmatch(r'このユニットが受けるダメージ全てを0にする|そのバトル中にこのユニットが受けるダメージ全てを0にする', sent2):
+            return [{'op': 'kw', 'kw': 'noDamage', 'to': 'self'}]
+        m = re.fullmatch(r'このユニットの色は(?P<c>赤|青|白|黒)になり、(?:赤|青|白|黒)以外の色を失う', sent2)
+        if m:
+            c = {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]
+            return [{'op': 'kw', 'kw': 'colorAs:only', 'to': 'self'}, {'op': 'kw', 'kw': 'colorAs:' + c, 'to': 'self'}]
+        m = re.fullmatch(r'このユニットは⁅(?P<i>バスター|ショット)アイコン⁆を持つ', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'iconAs:' + ('buster' if m.group('i') == 'バスター' else 'shot'), 'to': 'self'}]
+        if re.fullmatch(r'あなたのバスターアイコンがライフからドロップする際、代わりに手札に戻す', sent2):
+            return [{'op': 'rule', 'rule': 'lifeBusterToHand'}]
+        if re.fullmatch(r'このユニットがダメージを与えたユニットは、そのターン中、ドロップする際、代わりにエナジーゾーンに置く', sent2):
+            return [{'op': 'kw', 'kw': 'dmgToEnergy', 'to': 'self'}]
+        if re.fullmatch(r'このユニットがこのターンのアタックフェイズに登場したユニットから受けるダメージは0になる', sent2):
+            return [{'op': 'kw', 'kw': 'noDmgFromAtkEntered', 'to': 'self'}]
+        if re.fullmatch(r'各プレイヤーはショットアイコンのコマンドをプレイできない', sent2):
+            return [{'op': 'rule', 'rule': 'noShotCmd'}]
+        m = re.fullmatch(r'このユニットのパワーを(?P<n>\d+)倍にする', sent2)
+        if m:
+            return [{'op': 'kw', 'kw': 'powMul:' + m.group('n'), 'to': 'self'}]
+        m = re.fullmatch(r'このユニットは色に(?P<a>赤|青|白|黒)と(?P<b>赤|青|白|黒)も持つ', sent2)
+        if m:
+            CL = {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}
+            return [{'op': 'kw', 'kw': 'colorAs:' + CL[m.group('a')], 'to': 'self'}, {'op': 'kw', 'kw': 'colorAs:' + CL[m.group('b')], 'to': 'self'}]
+        # 『~』を得る: 다른 능력 부여
+        m = re.fullmatch(r'(?P<to>[^、。『]*?)は(?P<kws>(?:【(?:デコイ|ブリッツ|バーサーク)】と)*)『(?P<ab>⁅自動⁆[^』]+?)。?』を得(?:る|て、(?P<mods>(?:(?:パワー|ヒット)を[+-]\d+、?)+))?', sent2)
+        if m and subj(m.group('to')):
+            to = subj(m.group('to'))
+            ab = _parse_body2(m.group('ab'), {}, None)
+            if ab and ab.get('k') == 'auto':
+                r = [{'op': 'kw', 'kw': {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[x], 'to': to} for x in re.findall(r'【([^】]+)】', m.group('kws') or '')]
+                r.append({'op': 'grant', 'ab': ab, 'to': to})
+                for kk, vv in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods') or ''):
+                    r.append({'op': 'pow' if kk == 'パワー' else 'hit', 'n': int(vv), 'to': to})
+                return r
         return None
-    return {'if': conds, 'do': out} if out else None
 
 
 # ---------- 카드 전체 ----------
@@ -1719,7 +1885,19 @@ def parse_card(d):
             done.add(i)
             i += 1
             continue
-        m = re.fullmatch(r'⁅永続⁆このカードは全(?:ての)?領域で称号「([^」]+)」(?:と称号「([^」]+)」)?を持つ。?', ln)
+        m = re.fullmatch(r'⁅永続⁆(?P<t>あなたのテリトリー開放中、)?このカードを含めて「[^」]+」が手札に(?P<n>\d+)枚揃ったら、あなたはそれらを全て公開し、このゲームに勝利する。?', ln)
+        if m:
+            d['win5'] = {'n': int(m.group('n')), **({'terr': 1} if m.group('t') else {})}
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'⁅永続⁆このカードは全(?:ての)?領域でコスト(\d+)になる。?', ln)
+        if m:
+            d['cost'] = int(m.group(1))
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'⁅永続⁆このカードは(?:全(?:ての)?領域で)?称号「([^」]+)」(?:と称号「([^」]+)」)?を持つ。?', ln)
         if m:
             d['titles'] = list(dict.fromkeys((d.get('titles') or []) + [x for x in m.groups() if x]))
             done.add(i)
@@ -1743,7 +1921,7 @@ def parse_card(d):
             done.add(i)
             i += 1
             continue
-        m = re.fullmatch(r'⁅永続⁆(?:このユニット|このカード)は(?:全ての領域で)?(?:カード名を)?「([^」]+)」(?:として|としても)扱う。?(?:\(.*\))?', ln)
+        m = re.fullmatch(r'⁅永続⁆(?:このユニット|このカード)は(?:全(?:ての)?領域で)?(?:カード名を)?「([^」]+)」(?:として|としても)扱う。?(?:\(.*\))?', ln)
         if m:
             d['alias'] = m.group(1)
             done.add(i)
@@ -1938,14 +2116,14 @@ def _parse_body(ln, d, skill):
         if r:
             r['if'] = r.get('if', []) + [{'exists': {'side': 'own', 'attr': [m0.group(2)], 'notSelf': 1, 'type': 'unit'}}]
         return r
-    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET3\.0|特記事項(\d+)|怪異:([^】]+)|境界-([^】]+))】(?:\([^)]*\))?', ln)
+    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET[34]\.0|特記事項(\d+)|怪異:([^】]+)|境界-([^】]+))】(?:\([^)]*\))?', ln)
     kc = None
     if m:   # 조건이 맞을 때만 유효한 작품 키워드
         gk = m.group(2)
         if gk == '我駆力':
             d['gaku'] = 1; kc = {'dmgTurn': 1}               # 이번 턴 어느 플레이어든 데미지
         elif gk.startswith('INTERNET'):
-            d['net3'] = 1; kc = {'net3': 1}                  # 레스트한 에너지 3색 이상
+            d['net3'] = 1; kc = {'net3': 4 if '4.0' in gk else 1}   # 레스트한 에너지 3색(4.0은 4색) 이상
         elif gk.startswith('特記事項'):
             d['tokki'] = int(m.group(3)); kc = {'countGE': {'zone': 'drop', 'f': {'type': 'command'}, 'n': int(m.group(3))}}
         elif gk.startswith('怪異'):
@@ -1969,6 +2147,8 @@ def _parse_body2(ln, d, skill):
     body, once = split_once(body)
     if '永続' in tags or '永' in tags:
         pm = parse_perm(body.rstrip('。'))
+        if not pm and re.match(r'[^。]*?時、', body) and '⁅' not in body:   # 영속 표기지만 '~時' 자동 능력
+            return _parse_body2('⁅自動⁆' + body, d, skill)
         if not pm:
             return None
         return {'k': 'perm', 'if': conds + pm['if'], 'do': pm['do']}
