@@ -36,7 +36,9 @@ _DESC_TOKENS = [
     (r'エースか⁅バスターアイコン⁆の', lambda m, f: f.__setitem__('aceOrBuster', 1)),
     (r'(赤|青|白|黒)か⁅(ハート|スペード|ダイヤ|クラブ)⁆の', lambda m, f: f.__setitem__('colorOrAttr', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)], m.group(2)])),
     (r'クラスカード(?:を持つ|がついている|のついた|がついた)', lambda m, f: f.__setitem__('hasClass', 1)),
-    (r'「([^」]+)」を(?:名前に)?含む', lambda m, f: f.__setitem__('name', m.group(1))),
+    (r'(?:カード名に)?「([^」]+)」(?:か「([^」]+)」)+を(?:名前に)?含む', lambda m, f: f.__setitem__('nameAny', re.findall(r'「([^」]+)」', m.group(0)))),
+    (r'(?:カード名に)?「([^」]+)」を(?:名前に)?含む', lambda m, f: f.__setitem__('name', m.group(1))),
+    (r'カード名に、', lambda m, f: None),
     (r'⁅(ハート|スペード|ダイヤ|クラブ)⁆か⁅(ハート|スペード|ダイヤ|クラブ)⁆(?:の|を持つ)?', lambda m, f: f.__setitem__('attr', [m.group(1), m.group(2)])),
     (r'⁅(ハート|スペード|ダイヤ|クラブ)⁆(?:の|を持つ)?', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【ブライト】を持つ', lambda m, f: f.__setitem__('bright', 1)),
@@ -260,6 +262,16 @@ def eff_patterns():
         sub = parse_effects(m.group('x'))
         return sub and {'op': 'watch', 'on': 'leave', 'do': sub}
     add(r'(?:そのターン中|このターン)、?対象が(?:フィールドから)?ドロップした時、(?P<x>[^。]+)(?:。|$)', watch)
+    # 계약서 (ツイステッドワンダーランド): 덱 위 카드를 앞면으로 테리토리에 붙임
+    add(r'あなたの山札(?:を|の)上から(?P<n>\d+)枚、表で(?:この)?テリトリーに契約書としてつけ' + V('る', '') + END, lambda m: {'op': 'contract', 'n': int(m.group('n'))})
+    add(r'あなたの山札(?:を|の)上から(?P<n>\d+)枚、表で契約書としてこのテリトリーにつけ' + V('る', '') + END, lambda m: {'op': 'contract', 'n': int(m.group('n'))})
+    add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
+    add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
+    add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    add(r'各プレイヤーは(?P<n>\d+)枚引' + V('く', 'き', 'いて') + MAY + END,
+        lambda m: [{'op': 'draw', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})}, {'op': 'draw', 'n': int(m.group('n')), 'who': 'opp', **({'may': 1} if m.group('may') else {})}])
+    add(_DUR + r'(?P<to>[^、。]*?)のパワーを0になるよう(?:減少|増減)させ' + V('る', '') + END, lambda m: subj(m.group('to')) and {'op': 'powZero', 'to': subj(m.group('to'))})
+    add(r'このターンあなたの手札上限は(?P<n>\d+)枚になる' + END, lambda m: {'op': 'turnFlag', 'flag': 'hand' + m.group('n')})
     # 클래스 카드 (Fate/Grand Order)
     add(r'(?:あなたは)?クラスカードを(?P<n>\d+)枚生成してエナジーゾーンに置' + V('く', 'き') + END, lambda m: {'op': 'genClass', 'n': int(m.group('n')), 'to': 'energy'})
     def gen_att(m):
@@ -281,8 +293,9 @@ def eff_patterns():
         lambda m: {'op': 'classFromDrop', 'n': int(m.group('n')), 'to': 'energy', **({'may': 1} if m.group('may') else {})})
     add(r'あなたのドロップゾーンのクラスカードを1枚、あなたの(?P<d>[^、。]*?)ユニットにつけ(?:る|て)' + MAY + END,
         lambda m: (lambda f: f is not None and [{'op': 'tgt', 'f': {**f, 'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 1}, {'op': 'classFromDrop', 'n': 1, 'to': 'T'}])(parse_desc(m.group('d'))))
+    # 「生成」 없이 「つける」여도 게임 밖에서 붙임 (FAQ 赤く染まる大平原)
     add(r'あなたの(?P<d>[^、。]*?)ユニット1枚にクラスカードを1枚つけ' + V('る', '') + END,
-        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'f': {**f, 'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 0}, {'op': 'classFromDrop', 'n': 1, 'to': 'T'}])(parse_desc(m.group('d'))))
+        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'f': {**f, 'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 0}, {'op': 'genClass', 'n': 1, 'to': 'T'}])(parse_desc(m.group('d'))))
     add(r'このテリトリーにつけたクラスカードを(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END,
         lambda m: {'op': 'classTerrDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'次の相手ターンまで、クラスカードであなたのユニットのパワーが増加する際、\+1000の代わりに\+3000される' + END, lambda m: {'op': 'classBoost'})
@@ -411,6 +424,12 @@ def parse_cond(t):
         (r'このターン(?:に)?このユニットが登場している', lambda m: {'enteredThisTurn': 1}),
         (r'このユニットが【コスプレ】で登場した', lambda m: {'cos': 1}),
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
+        (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
+        (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
+        (r'このターン(?:に)?あなたの他のユニットが登場している', lambda m: {'otherEntered': 1}),
+        (r'(?:あなたの、)?つけた契約書が(?P<n>\d+)枚以上', lambda m: {'contractGE': int(m.group('n'))}),
+        (r'あなたのドロップゾーンに(?P<d>[^、。]+?)がある', lambda m: (lambda f: f is not None and {'zoneHas': {'zone': 'drop', 'f': f}})(parse_desc(m.group('d') + 'の'))),
+        (r'バトル相手が(?P<c>赤|青|白|黒)', lambda m: {'vsF': {'color': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]]}}),
         (r'このユニットにつけたクラスカードが(?P<n>\d+)枚以上', lambda m: {'selfClassGE': int(m.group('n'))}),
         (r'あなたの(?:称号「(?P<t>[^」]+)」の)?テリトリーが開放中', lambda m: {'terrTitle': m.group('t')} if m.group('t') else {'terr': 1}),
         (r'あなたの、称号「(?P<a>[^」]+)」か(?:称号)?「(?P<b>[^」]+)」のテリトリー開放中', lambda m: {'terrTitleAny': [m.group('a'), m.group('b')]}),
@@ -466,6 +485,8 @@ def parse_cond(t):
                     out.append({'exists': f} if fn is None else {'none': f})
                 else:
                     c = fn(m)
+                    if not c:
+                        return None
                     if any(k.endswith('GE') for k in c):
                         _LAST['cond'] = c
                     out.append(c)
@@ -633,6 +654,7 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'相手が効果でカードを引いた時', ('effDraw', 'opp', None)),
     (r'あなたのユニットにクラスカードがついた時', ('classAttach', 'own', None)),
     (r'(?:あなたが)?スキルコストで、?手札かライフ(?:の|から)このカードをドロップした時', ('skillDrop', 'self', None)),
     (r'(?:あなたのターン中、)?あなたのユニットが【スキル】を発動した時', ('skillUsed', 'own', None)),
@@ -763,9 +785,9 @@ def parse_perm(t):
         t = t[m0.end():]
     for sent in [x for x in t.split('。') if x]:
         per = None
-        mp = re.match(r'あなたの(?P<z>エナジー|手札|ドロップゾーンのカード|ユニット)(?P<k>\d+)枚につき、', sent)
+        mp = re.match(r'あなたの(?P<z>エナジー|手札|ドロップゾーンのカード|ユニット|つけた契約書)(?P<k>\d+)枚につき、', sent)
         if mp:
-            per = {'zone': {'エナジー': 'energy', '手札': 'hand', 'ドロップゾーンのカード': 'drop', 'ユニット': 'field'}[mp.group('z')], 'k': int(mp.group('k'))}
+            per = {'zone': {'エナジー': 'energy', '手札': 'hand', 'ドロップゾーンのカード': 'drop', 'ユニット': 'field', 'つけた契約書': 'contract'}[mp.group('z')], 'k': int(mp.group('k'))}
             sent = sent[mp.end():]
         m = re.fullmatch(r'(?P<to>[^、。]*?)の(?P<mods>(?:パワー|ヒット)を[+-]\d+(?:、(?:パワー|ヒット)を[+-]\d+)?)(?:する)?', sent)
         if m and per:
@@ -790,6 +812,16 @@ def parse_perm(t):
             out.append({'op': 'kw', 'kw': {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group('k')], 'to': to})
             for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods')):
                 out.append({'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': to})
+            continue
+        m = re.fullmatch(r'(?P<to>[^、。]*?)は(?P<k>アタックされない|スタンドフェイズにスタンドしない)', sent)
+        if m:
+            to = subj(m.group('to'))
+            if not to:
+                return None
+            out.append({'op': 'kw', 'kw': {'アタックされない': 'noBeAttacked', 'スタンドフェイズにスタンドしない': 'noStand'}[m.group('k')], 'to': to})
+            continue
+        if re.fullmatch(r'相手の手札上限は(\d+)枚になる', sent):
+            out.append({'op': 'rule', 'rule': 'oppHand' + re.search(r'\d+', sent).group()})
             continue
         m = re.fullmatch(r'(?P<to>[^、。]*?)(?:は|では)(?P<k>アタックとブロックができない|アタックできない|アタックができない|ブロックができない|ブロックできない|ブロックされない)', sent)
         if m:
@@ -910,6 +942,11 @@ def parse_card(d):
             c = [{'terrTitle': m.group(1)}] if m.group(1) else []
             abs_.append({'k': 'perm', 'if': c, 'do': [{'op': 'kw', 'kw': 'unblockable', 'to': 'self'}, {'op': 'kw', 'kw': 'ignoreDecoy', 'to': 'self'}], 'li': [i]})
             abs_.append({'k': 'perm', 'if': c + [{'red': 1}], 'do': [{'op': 'hit', 'n': int(m.group(2)), 'to': 'self'}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
+        if re.fullmatch(r'⁅永続⁆あなたのクラスカードのエナジーは色が黒と青と赤になる。?', ln):
+            abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'rule', 'rule': 'classTri'}], 'li': [i]})
             done.add(i)
             i += 1
             continue
