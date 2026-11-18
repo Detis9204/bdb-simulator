@@ -583,6 +583,20 @@ def eff_patterns():
 EFF = eff_patterns()
 
 # ---------- 조건 ----------
+def _histc(m, base):
+    """기록 조건: 「このターン(このゲーム中)、あなた/相手の~が…」"""
+    d = m.group('d')
+    d = re.sub(r'^(?:⁅([^⁆]+)⁆)$', r'⁅\1⁆', d)
+    f = _zdesc(d) if d else {}
+    if f is None and d:
+        f = _zdesc(d + 'カード')
+    if f is None:
+        return None
+    if base['k'] == 'mv' and base.get('to') == 'field' and 'type' not in f:
+        f = dict(f, type='unit')
+    return {'hist': dict(base, scope='turn' if m.group('sc').startswith('このターン') else 'game', side='own' if m.group('w') == 'あなた' else 'opp', **({'f': f} if f else {}))}
+
+
 def _pair(a, b):
     """「「日向」を含むカードと「ユイ」を含むカード」 / 「青と赤のエースカード」 -> 두 묘사"""
     noun = re.search(r'(エースカード|ユニットカード|コマンドカード|カード)$', b)
@@ -634,6 +648,17 @@ def parse_cond(t):
     _LAST.setdefault('cond', None)
     C = [
         (r'このターン(?:に)?あなたがコマンドをプレイしてい(?:る|た)', lambda m: {'cmdTurn': 1}),
+        # 이번 판 기록으로 판단하는 조건
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)のライフから(?P<d>[^、。]*?)が(?:ドロップされ|ドロップし|出)てい(?:る|た)', lambda m: _histc(m, {'k': 'dmg'})),
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)の(?P<d>[^、。]*?)が(?P<z>ドロップゾーン|リムーブゾーン|エナジーゾーン|手札|ライフ(?:ゾーン)?)に置かれてい(?:る|た)',
+         lambda m: _histc(m, {'k': 'mv', 'to': {'ドロップゾーン': 'drop', 'リムーブゾーン': 'remove', 'エナジーゾーン': 'energy', '手札': 'hand'}.get(m.group('z'), 'life')})),
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)の(?P<d>[^、。]*?)が(?:フィールドから)?ドロップされてい(?:る|た)', lambda m: _histc(m, {'k': 'mv', 'from': 'field', 'to': 'drop'})),
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)の(?P<d>[^、。]*?)が登場してい(?:る|た)', lambda m: _histc(m, {'k': 'mv', 'notFrom': 'field', 'to': 'field'})),
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)の(?P<d>[^、。]*?)がリムーブされてい(?:る|た)', lambda m: _histc(m, {'k': 'mv', 'to': 'remove'})),
+        (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)が(?P<d>[^、。]*?)をプレイしてい(?:る|た)', lambda m: _histc(m, {'k': 'play'})),
+        (r'このコマンドがこのターン初めてプレイされたコマンド', lambda m: {'hist': {'scope': 'turn', 'k': 'play', 'side': 'own', 'f': {'type': 'command'}, 'n': 1, 'cmp': 'eq'}}),
+        (r'(?P<w>あなた|相手)の、?パワーが元々のパワーより高いユニットがいる', lambda m: {'oppAbovePrinted': 'own' if m.group('w') == 'あなた' else 'opp'}),
+        (r'表にしたいずれかのエナジーと共通の色を持つあなたのユニットがいる', lambda m: {'milledColorUnit': 1}),
         (r'あなたのつけたログが(?P<n>\d+)枚より少ない', lambda m: {'logLT': int(m.group('n'))}),
         (r'対象がフィールドにいる', lambda m: {'tOnField': 1}),
         (r'このターン(?:に)?対象が相手プレイヤーにダメージを与えてい(?:る|た)', lambda m: {'tDealtPlayer': 1}),
