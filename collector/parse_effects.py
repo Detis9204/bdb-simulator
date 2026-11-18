@@ -117,6 +117,8 @@ def subj(t):
         return 'T'
     if t == 'バトル相手':
         return 'vs'
+    if t in ('そのアタックしたユニット', 'アタックしたユニット'):
+        return 'T'
     if t == TO_SELF or t == 'このカード':
         return 'self'
     if t in ('ドロップゾーンのこのカード', 'あなたのドロップゾーンのこのカード', 'ドロップゾーンからそのカード', 'ドロップゾーンのそのカード'):
@@ -249,7 +251,7 @@ def eff_patterns():
         if m.group('may'):
             st['may'] = 1
         return st
-    add(r'(?:あなたの)?山札(?:を|の)上から1枚(?:を)?公開(?:し|して)' + MAY + r'(?:。|、)それが' + DESC + r'(?:' + NOUN[:-1] + r'))?なら(?P<y>手札に加え|登場させ)、違うなら(?P<n2>ドロップ|山札の下に置)' + V('する', 'く', 'し', 'き') + END, reveal_top)
+    add(r'(?:あなたの)?山札(?:を|の)上から1枚(?:を)?公開(?:し|して|する)' + MAY + r'(?:。|、)それが' + DESC + r'(?:' + NOUN[:-1] + r'))?なら(?P<y>手札に加え|登場させ)、違うなら(?P<n2>ドロップ|山札の下に置)' + V('する', 'く', 'し', 'き') + END, reveal_top)
     # 에너지의 커맨드를 코스트 없이 플레이
     add(r'あなたの' + DESC + r'コマンドカードのエナジーを1枚、コストを払わずにプレイ' + V('する', 'し') + MAY + END,
         lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': 'energy', 'f': {**f, 'type': 'command'}, 'may': 1})(parse_desc(m.group('d').rstrip('で'))))
@@ -273,6 +275,17 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    # 배틀 상대 중 조건에 맞으면 드롭
+    add(r'(?P<d>[^、。]*?)バトル相手をドロップさせ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'drop', 'to': 'vs', 'vf': f})(parse_desc(m.group('d'))))
+    # 이 카드를 (드롭 존/에너지에서) 코스트 없이 플레이
+    add(r'(?P<z>ドロップゾーン|エナジー|手札)のこのカードをコストを払わず(?:に)?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: {'op': 'playSelf', 'from': {'ドロップゾーン': 'drop', 'エナジー': 'energy', '手札': 'hand'}[m.group('z')], 'may': 1})
+    add(r'あなたのライフの先頭をドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'lifeDrop', 'n': 1, **({'may': 1} if m.group('may') else {})})
+    add(r'相手は自身のユニットを(?P<n>\d+)枚ドロップさせ' + V('る', '') + END, lambda m: {'op': 'sacrifice', 'who': 'opp', 'n': int(m.group('n'))})
+    add(r'(?:次のエンドフェイズ開始時、)?あなたのテリトリーを閉じ' + V('る', '') + END, lambda m: {'op': 'closeTerr'})
+    for rx, op in [(r'スタンド' + V('する', 'し', 'させる', 'させ'), 'stand'), (r'レスト' + V('する', 'し', 'させる', 'させ'), 'rest')]:
+        add(rx + END, lambda m, op=op: {'op': op, 'to': 'T'})
     # 서로 파워만큼 데미지
     add(r'あなたのユニット1枚と相手のユニット1枚を対象とし、それらは互いのパワー分、ダメージを与えあう' + END,
         lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 0, 'save': 'A'}, {'op': 'tgt', 'f': {'side': 'opp', 'type': 'unit'}, 'n': 1, 'upto': 0, 'save': 'B'}, {'op': 'fight'}])
@@ -616,6 +629,21 @@ def _parse_seq(t, steps=None):
         if m:
             t = t[m.end():]
             continue
+        # 「~1枚につき、」: 다음 효과의 수치를 개수만큼 곱함
+        m = re.match(r'(?P<w>あなたの|相手の)(?P<z>手札|エナジー|ドロップゾーン(?:のカード)?|ユニット)(?P<k>\d+)枚につき、|対象のヒット(?P<h>\d+)につき、', t)
+        if m:
+            sub = []
+            j = t.find('。')
+            inner, rest = (t[m.end():], '') if j < 0 else (t[m.end():j], t[j + 1:])
+            if _parse_seq(inner, sub) is None:
+                return None
+            per = {'tHit': 1} if m.group('h') else {'side': 'opp' if m.group('w') == '相手の' else 'own', 'zone': {'手札': 'hand', 'エナジー': 'energy', 'ユニット': 'field'}.get(m.group('z'), 'drop'), 'k': int(m.group('k'))}
+            for st in sub:
+                if st.get('op') not in ('tgt', 'if', 'choose'):
+                    st['per'] = per
+            steps.extend(sub)
+            t = rest
+            continue
         # 비용을 내면 이어서: 「(비용)ことで、」
         m = re.match(r'(?P<c>[^。、]*(?:、[^。、]*)?)ことで、', t)
         if m:
@@ -901,7 +929,7 @@ def parse_perm(t):
 # ---------- 카드 전체 ----------
 def split_once(body):
     once = 0
-    for rx in [r'この能力は(?:各|1)ターン(?:に)?1回(?:まで)?(?:しか)?発動(?:でき|し)(?:る|ない)。?', r'\(この能力は各ターン1回まで発動できる\)']:
+    for rx in [r'この能力は(?:各|1)ターン(?:に)?1回(?:まで|のみ)?(?:しか)?発動(?:でき|し)(?:る|ない)。?', r'\(この能力は各ターン1回まで発動できる\)']:
         if re.search(rx, body):
             once = 1
             body = re.sub(rx, '', body)
