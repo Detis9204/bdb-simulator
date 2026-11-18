@@ -609,7 +609,7 @@ const EFF = {
   scout2: { scout: 2,      text: '스카웃 2' },
   life1:  { life: 1,       text: '라이프 +1' },  // 덱을 섞고 맨 위 1장을 라이프 맨 앞에
 };
-const KW_TEXT = { decoy: '디코이', blitz: '블리츠', berserk: '버서크', unblockable: '블록 불가', ignoreDecoy: '디코이 무시', noAttack: '공격 불가', noBlock: '블록 못 함', noBeAttacked: '공격받지 않음', noStand: '스탠드하지 않음', atkStand: '스탠드 유닛도 공격', aceOnlyAttack: '에이스에게만 공격받음', exile: '드롭 대신 리무브', fragile: '1 데미지로도 드롭', mustBlock: '반드시 블록', stayField: '드롭 외로 떠나지 않음', indestructible: '드롭되지 않음' };
+const KW_TEXT = { decoy: '디코이', blitz: '블리츠', berserk: '버서크', unblockable: '블록 불가', ignoreDecoy: '디코이 무시', noAttack: '공격 불가', noBlock: '블록 못 함', noBeAttacked: '공격받지 않음', noStand: '스탠드하지 않음', atkStand: '스탠드 유닛도 공격', aceOnlyAttack: '에이스에게만 공격받음', exile: '드롭 대신 리무브', fragile: '1 데미지로도 드롭', mustBlock: '반드시 블록', stayField: '드롭 외로 떠나지 않음', indestructible: '드롭되지 않음', noAttackUnit: '유닛 공격 불가', blank: '능력 없음', noDamage: '받는 데미지 0', cmdImmune: '커맨드 대상 불가' };
 const KW_SHOW = Object.keys(KW_TEXT);
 
 /* ---------- 카드 데이터 (테스트용 가상 카드) ----------
@@ -845,7 +845,7 @@ const Engine = (() => {
     const opp = unitsOf(s, 1 - p).filter(u => (u.rested || (A && hasKw(s, A, 'atkStand'))) && !hasKw(s, u, 'noBeAttacked') && !(hasKw(s, u, 'aceOnlyAttack') && A && DEFS[A.id].sub !== 'ace'));
     const decoys = opp.filter(u => hasKw(s, u, 'decoy')).map(u => u.uid);
     if (decoys.length && !(A && hasKw(s, A, 'ignoreDecoy'))) return decoys;
-    if (A && hasKw(s, A, 'berserk')) return ['player'];
+    if (A && (hasKw(s, A, 'berserk') || hasKw(s, A, 'noAttackUnit'))) return ['player'];
     return ['player', ...opp.map(u => u.uid)];
   }
   const canAttack = (s, u) => u.owner === s.active && !u.rested && !hasKw(s, u, 'noAttack');
@@ -1130,16 +1130,16 @@ const Engine = (() => {
     if (!A || !B) { log(s, '배틀 상대가 없어져 데미지 없음'); return; }
     const ab = hasKw(s, A, 'blitz'), bb = hasKw(s, B, 'blitz');
     if (ab || bb) {
-      if (ab) B.damage += power(s, A);
-      if (bb) A.damage += power(s, B);
+      if (ab && !hasKw(s, B, 'noDamage')) B.damage += power(s, A);
+      if (bb && !hasKw(s, A, 'noDamage')) A.damage += power(s, B);
       log(s, '블리츠: 먼저 데미지');
       checkDestroy(s);
     }
     const A2 = findUnit(s, a), B2 = findUnit(s, b);
     if (A2 && B2) {
       const pa = power(s, A2), pb = power(s, B2);
-      if (!ab) B2.damage += pa;
-      if (!bb) A2.damage += pb;
+      if (!ab && !hasKw(s, B2, 'noDamage')) B2.damage += pa;
+      if (!bb && !hasKw(s, A2, 'noDamage')) A2.damage += pb;
       checkDestroy(s);
     }
     const A3 = findUnit(s, a), B3 = findUnit(s, b);
@@ -1438,6 +1438,7 @@ const Engine = (() => {
     try {
       const srcs = abSources(s);
       for (const X of srcs) for (const a of abOf(X.id)) {
+        if (!a.do.some(st => st.kw === 'blank') && isBlank(s, X)) continue;
         if (a.k !== 'perm') continue;
         const ctx = { p: X.p, src: X.uid, id: X.id };
         if (!condsOk(s, ctx, a.if)) continue;
@@ -1455,6 +1456,12 @@ const Engine = (() => {
     return out;
   }
 
+  /** 「他の能力を全て失う」 상태인 카드 */
+  function isBlank(s, X) {
+    const u = findUnit(s, X.uid);
+    if (u && u.tmp.kw.includes('blank')) return true;
+    return abOf(X.id).some(a => a.k === 'perm' && a.do.some(st => st.kw === 'blank') && condsOk(s, { p: X.p, src: X.uid, id: X.id }, a.if));
+  }
   /** 시점 이벤트 → 맞는 자동 능력을 대기열에. ev: {uid(사건의 유닛), p(그 주인 또는 그 페이즈의 플레이어), card(필드를 떠난 카드), ...} */
   /** 능력이 작동하는 카드: 필드 유닛, 거기 붙은 카드, 개방된 테리토리 */
   function abSources(s) {
@@ -1481,6 +1488,7 @@ const Engine = (() => {
     for (const X of srcs) [...abOf(X.id), ...(DEFS[X.id]?.mt || []).map(m => ({ ...m, k: 'auto', man: 1 }))].forEach((a, ai) => {
       if (a.k !== 'auto' || a.on !== on) return;
       if (X.gone && a.src !== 'self') return;
+      if (!X.gone && isBlank(s, X)) return;
       const evDef = ev.uid ? DEFS[(findUnit(s, ev.uid) || ev.card || {}).id] : null;
       switch (a.src) {
         case 'self': if (ev.uid !== X.uid) return; if (on === 'win' && !a.any && !ev.attacking) return; break;
@@ -1626,12 +1634,13 @@ const Engine = (() => {
       case 'paid': if (DEFS[q.id].ab[q.ai].cost?.some(x => x.inCost)) fire(s, 'skillUsed', { uid: q.src, p }); return 'ok';
       case 'tgt': {
         const n = st.n, zone = st.zone;
-        const cands = zone ? zoneCards(s, q, zone, st.f) : s.field.filter(u => unitMatches(s, u, st.f, p, q.src, q.ctx)).map(u => u.uid);
+        const isCmd = DEFS[q.id]?.type === 'command';
+        const cands = zone ? zoneCards(s, q, zone, st.f) : s.field.filter(u => unitMatches(s, u, st.f, p, q.src, q.ctx) && !(isCmd && u.owner !== p && hasKw(s, u, 'cmdImmune'))).map(u => u.uid);
         if (!cands.length) { q.ctx.T = []; log(s, '고를 수 있는 대상이 없음'); return 'ok'; }
         if (!st.upto && cands.length <= n) { q.ctx.T = cands; q.ctx.Tzone = zone || 'field'; noteT(s, q); if (st.save) q.ctx[st.save] = cands; return 'ok'; }
         return ask(s, q, { kind: 'pick', cands, min: st.upto ? 0 : Math.min(n, cands.length), max: n, text: st.save === 'A' ? '내 유닛을 고르세요' : st.save === 'B' ? '상대 유닛을 고르세요' : '대상을 고르세요', into: 'T', save: st.save, zone: zone || 'field' });
       }
-      case 'dmg': for (const u of unitsFor(s, q, st.to)) { u.damage += st.n; log(s, `${name(u)}에게 ${st.n} 데미지`); } return 'ok';
+      case 'dmg': for (const u of unitsFor(s, q, st.to)) { if (hasKw(s, u, 'noDamage')) { log(s, `${name(u)}: 받는 데미지 0`); continue; } u.damage += st.n; log(s, `${name(u)}에게 ${st.n} 데미지`); } return 'ok';
       case 'pow': for (const u of unitsFor(s, q, st.to)) { u.tmp.power += st.n; log(s, `${name(u)} 파워 ${st.n > 0 ? '+' : ''}${st.n} (이번 턴)`); } return 'ok';
       case 'hit': for (const u of unitsFor(s, q, st.to)) { u.tmp.hit += st.n; log(s, `${name(u)} 히트 ${st.n > 0 ? '+' : ''}${st.n} (이번 턴)`); } return 'ok';
       case 'kw': for (const u of unitsFor(s, q, st.to)) u.tmp.kw.push(st.kw); return 'ok';

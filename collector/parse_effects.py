@@ -1002,10 +1002,10 @@ def parse_perm(t):
     """⁅永続⁆ 본문 -> {if:[...], do:[pow/hit/kw ...]} | None"""
     conds = []
     for _ in range(3):
-        m = re.match(r'(?P<c>.+?)(?:なら|中で|中|時)、', t)
+        m = re.match(r'(?P<c>.+?)(?:なら|ていたら|中で|中|時)、', t)
         if not m:
             break
-        c = parse_cond(m.group('c').rstrip('で'))
+        c = parse_cond(m.group('c').rstrip('で') + ('ている' if m.group(0).endswith('ていたら、') else ''))
         if c is None:
             break
         conds += c
@@ -1046,10 +1046,13 @@ def parse_perm(t):
             for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods')):
                 out.append({'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': to})
             continue
-        KWP = [(r'アタックされ(?:ず|ない)', ['noBeAttacked']), (r'【デコイ】を無視してアタックでき(?:る)?', ['ignoreDecoy']), (r'ブロックされ(?:ず|ない)', ['unblockable']),
+        KWP = [(r'アタックもブロックもされない', ['noBeAttacked', 'unblockable']), (r'ユニットにアタックできない', ['noAttackUnit']), (r'他の能力を全て失う', ['blank']),
+               (r'受けるダメージ全てを0にする', ['noDamage']), (r'ドロップ以外の方法でフィールドを離れない', ['stayField']), (r'コマンドの対象にならず', ['cmdImmune']),
+               (r'アタックされ(?:ず|ない)', ['noBeAttacked']), (r'【デコイ】を無視してアタックでき(?:る)?', ['ignoreDecoy']), (r'ブロックされ(?:ず|ない)', ['unblockable']),
                (r'ブロックができ(?:ず|ない)', ['noBlock']), (r'アタックもブロックもできない', ['noAttack', 'noBlock']), (r'レストで登場する', ['enterRested']),
                (r'【(デコイ|ブリッツ|バーサーク)】(?:と【(デコイ|ブリッツ|バーサーク)】)?を得(?:る|て)', None)]
-        mk = re.fullmatch(r'(?P<to>[^。]*?)は(?P<l>.+)', sent)
+        sent = re.sub(r'^このユニットが受けるダメージ全てを0にする$', 'このユニットは受けるダメージ全てを0にする', sent)
+        mk = re.fullmatch(r'(?P<to>[^。]*?)(?:では|は)(?P<l>.+)', sent)
         if mk and subj(re.sub(r'^あなたの、', 'あなたの', mk.group('to'))):
             to = subj(re.sub(r'^あなたの、', 'あなたの', mk.group('to')))
             rest_, ks = mk.group('l'), []
