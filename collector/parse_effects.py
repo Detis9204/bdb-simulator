@@ -306,6 +306,21 @@ def eff_patterns():
     add(r'対象とこのユニットを(?P<st>スタンドで)?入れ替え' + V('る', '') + END, lambda m: {'op': 'swapT', **({'stand': 1} if m.group('st') else {})})
     add(r'あなたのエナジーを(?P<n>\d+)枚、?(?:望む順で)?山札の下に置' + V('く', 'き', 'い') + END, lambda m: {'op': 'pick', 'from': 'energy', 'to': 'bottom', 'f': {}, 'n': int(m.group('n')), 'upto': 0})
     add(r'(?:そのターン中、)?相手のユニット全ては可能な限りブロックする' + END, lambda m: {'op': 'kw', 'kw': 'mustBlock', 'to': {'all': {'side': 'opp', 'type': 'unit'}}})
+    add(r'(?:あなたの)?山札を上から1枚見る。それがアタックしたユニットと異なる色でヒット(?P<h>\d+)なら登場させ、違うならドロップしてよい' + END,
+        lambda m: {'op': 'peekDiff', 'hit': int(m.group('h'))})
+    add(r'相手は対象をライフの先頭に置' + V('く', 'き', 'い') + END, lambda m: {'op': 'life', 'to': 'T'})
+    add(r'ドロップゾーンのこのカードをレストで登場させるかエナジーゾーンに置' + V('く', 'き') + END,
+        lambda m: {'op': 'choose', 'opts': [[{'op': 'summonRested', 'to': 'card'}], [{'op': 'energy', 'to': 'card'}]], 'labels': ['레스트로 등장', '에너지 존에 놓음']})
+    add(_DUR + r'(?:次の(?:相手|あなたの)?ターンまで、)?(?P<to>[^、。]*?)はドロップ以外の方法でフィールドを離れない' + END,
+        lambda m: subj(m.group('to')) and {'op': 'kw', 'kw': 'stayField', 'to': subj(m.group('to'))})
+    def tturn(m):
+        sub = parse_effects(m.group('x'))
+        return sub and {'op': 'turnTrig', 'on': 'leave', 'side': 'opp' if m.group('w') == '相手' else 'own', 'do': sub}
+    add(r'このターン(?P<w>相手|あなた)のユニットがフィールドからドロップした時、(?P<x>[^。]+)(?:。|$)', tturn)
+    def twin(m):
+        sub = parse_effects(m.group('x'))
+        return sub and {'op': 'watch', 'on': 'win', 'do': sub}
+    add(r'(?:そのターン中、)?対象がバトルに勝利した時、(?P<x>[^。]+)(?:。|$)', twin)
     # 라이프 맨 앞 보기 / 공개
     add(r'あなたのライフの先頭を見る' + END, lambda m: {'op': 'peekLife'})
     # 배틀 상대 중 조건에 맞으면 드롭
@@ -351,6 +366,8 @@ def eff_patterns():
         t = m.group('t')
         if t in ('このユニット', 'そのユニット', 'このテリトリー'):
             return {'op': 'genClass', 'n': int(m.group('n')), 'to': {'このユニット': 'self', 'そのユニット': 'T', 'このテリトリー': 'terr'}[t]}
+        if 'エースか⁅バスターアイコン⁆' in t:
+            return [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'aceOrBuster': 1}, 'n': 1, 'upto': 0}, {'op': 'genClass', 'n': int(m.group('n')), 'to': 'T'}]
         f = parse_desc(re.sub(r'^あなたの、?', 'あなたの', t).replace('ユニット', '').replace('エース', '') or '')
         if f is None:
             return None
@@ -501,6 +518,10 @@ def parse_cond(t):
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
         (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
         (r'相手が引かなかった', lambda m: {'oppDeclined': 1}),
+        (r'相手のエナジーがあなたのエナジーより(?P<n>\d+)枚以上多い', lambda m: {'oppEnergyMore': int(m.group('n'))}),
+        (r'あなたのユニットの枚数が相手のユニットの枚数以下', lambda m: {'unitsLE': 1}),
+        (r'このユニットのパワーが(?P<n>\d+)以上', lambda m: {'selfPowGE': int(m.group('n'))}),
+        (r'このユニットがレストしている', lambda m: {'selfRested': 1}),
         (r'あなたのドロップゾーンに(?P<l>(?:⁅(?:スペード|ハート|ダイヤ|クラブ)⁆、?)+)がある', lambda m: {'dropAttrsEach': re.findall(r'スペード|ハート|ダイヤ|クラブ', m.group('l'))}),
         (r'相手のエナジーが(?P<n>\d+)枚以下', lambda m: {'oppEnergyLE': int(m.group('n'))}),
         (r'あなたのつけたログが(?P<n>\d+)枚以上', lambda m: {'logGE': int(m.group('n'))}),
@@ -703,6 +724,12 @@ def _parse_seq(t, steps=None):
                 # 같은 문장 끝(。)까지를 조건 안쪽으로
                 j = rest.find('。')
                 inner, t = (rest, '') if j < 0 else (rest[:j], rest[j + 1:])
+                mrep = re.fullmatch(r'手札に加える代わりに(?P<r>レストで)?登場させてよい', inner)
+                if mrep and steps and steps[-1].get('op') in ('look', 'pick') and steps[-1].get('to') == 'hand':
+                    prev = steps.pop()
+                    alt2 = dict(prev, to='field', **({'rested': 1} if mrep.group('r') else {}))
+                    steps.append({'op': 'if', 'c': c, 'then': [{'op': 'confirm', 'text': '패에 넣는 대신 등장시킬까요?', 'alt': 1, 'no': [prev]}, alt2], 'else': [prev]})
+                    continue
                 alt = inner.startswith('代わりに')
                 sub = parse_effects(inner[4:] if alt else inner)
                 if sub is None:
@@ -765,6 +792,7 @@ TRIGGERS = [
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
     (r'このユニットがレストで登場した時', ('enter', 'self', {'enteredRested': 1})),
+    (r'このユニットが【ブライト】してバトルに勝利した時', ('win', 'self', {'brightWin': 1})),
     (r'このユニットが相手ターンにバトルする時', ('battle', 'self', {'oppTurnX': 1})),
     (r'ダメージでこのカードがライフからドロップした時', ('lifeDmgDrop', 'self', None)),
     (r'あなたのユニットがバトルする時', ('battle', 'own', None)),
@@ -831,6 +859,9 @@ def parse_trigger(t):
                     continue
                 src = 'own' if m.group('w') == 'あなた' else 'opp'
                 conds.append({'evF': f})
+            if extra and 'brightWin' in extra:
+                conds.append({'selfBrighted': 1})
+                extra = {'any': 1}
             if extra and 'oppTurnX' in extra:
                 conds.append({'oppTurn': 1})
                 extra = None
@@ -1275,6 +1306,12 @@ def parse_card(d):
         m = re.fullmatch(r'⁅永続⁆このカードは全(?:ての)?領域で称号「([^」]+)」(?:と称号「([^」]+)」)?を持つ。?', ln)
         if m:
             d['titles'] = list(dict.fromkeys((d.get('titles') or []) + [x for x in m.groups() if x]))
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'あなたのエナジーが(\d+)色(?:以上)?なら、このカードをプレイする際のコストを(\d+)減らしてプレイできる。?', ln)
+        if m:
+            d['costRed'] = {'colors': int(m.group(1)), 'by': int(m.group(2))}
             done.add(i)
             i += 1
             continue
