@@ -44,6 +44,7 @@ _DESC_TOKENS = [
     (r'⁅(ハート|スペード|ダイヤ|クラブ)⁆(?:の|を持つ)?', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【ブライト】を持つ', lambda m, f: f.__setitem__('bright', 1)),
     (r'【コスプレ】を持つ', lambda m, f: f.__setitem__('cos', 1)),
+    (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
     (r'(ハート|スペード|ダイヤ|クラブ)の', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【(デコイ|ブリッツ|バーサーク)】を持つ', lambda m, f: f.__setitem__('kw', {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group(1)])),
@@ -119,7 +120,7 @@ def subj(t):
         return 'T' if 'その' in t else 'card'
     if t in ('ドロップゾーンのこのカード', 'あなたのドロップゾーンのこのカード'):
         return 'card'
-    if t in ('このカードがついているユニット', 'このカードがついたユニット'):
+    if t in ('このカードがついているユニット', 'このカードがついたユニット', 'このカードをつけたユニット'):
         return 'host'
     if t in ('あなた', 'あなた自身'):
         return 'me'
@@ -269,6 +270,8 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    add(r'(?:そのターン中、)?あなたはダメージで(?:は)?敗北せず' + END, lambda m: {'op': 'turnFlag', 'flag': 'noLoseDmg'})
+    add(r'(?:そのターン中、)?あなたはダメージで(?:は)?敗北しない' + END, lambda m: {'op': 'turnFlag', 'flag': 'noLoseDmg'})
     add(r'各プレイヤーは(?P<n>\d+)枚引' + V('く', 'き', 'いて') + MAY + END,
         lambda m: [{'op': 'draw', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})}, {'op': 'draw', 'n': int(m.group('n')), 'who': 'opp', **({'may': 1} if m.group('may') else {})}])
     add(_DUR + r'(?P<to>[^、。]*?)のパワーを0になるよう(?:減少|増減)させ' + V('る', '') + END, lambda m: subj(m.group('to')) and {'op': 'powZero', 'to': subj(m.group('to'))})
@@ -426,6 +429,7 @@ def parse_cond(t):
         (r'このユニットが【コスプレ】で登場した', lambda m: {'cos': 1}),
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
         (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
+        (r'このターン(?:に)?あなたがダメージを受けている', lambda m: {'meDmgTurn': 1}),
         (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
         (r'このターン(?:に)?あなたの他のユニットが登場している', lambda m: {'otherEntered': 1}),
         (r'(?:あなたの、)?つけた契約書が(?P<n>\d+)枚以上', lambda m: {'contractGE': int(m.group('n'))}),
@@ -824,6 +828,9 @@ def parse_perm(t):
                 return None
             out.append({'op': 'kw', 'kw': {'アタックされない': 'noBeAttacked', 'スタンドフェイズにスタンドしない': 'noStand'}[m.group('k')], 'to': to})
             continue
+        if re.fullmatch(r'あなたは(?:ライフが0枚でも)?ダメージで敗北しない', sent):
+            out.append({'op': 'rule', 'rule': 'noLoseDmg'})
+            continue
         if re.fullmatch(r'相手の手札上限は(\d+)枚になる', sent):
             out.append({'op': 'rule', 'rule': 'oppHand' + re.search(r'\d+', sent).group()})
             continue
@@ -1091,6 +1098,19 @@ def parse_body(ln, d, skill):
 
 
 def _parse_body(ln, d, skill):
+    gk = False
+    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【我駆力】(?:\([^)]*\))?', ln)
+    if m:   # 我駆力: 이번 턴 어느 플레이어든 데미지를 받았으면 유효
+        gk = True
+        d['gaku'] = 1
+        ln = m.group(1) + ln[m.end():]
+    r = _parse_body2(ln, d, skill)
+    if r and gk:
+        r['if'] = r.get('if', []) + [{'dmgTurn': 1}]
+    return r
+
+
+def _parse_body2(ln, d, skill):
     ln = re.sub(r'\((?:[^()]*)\)$', '', ln).strip()   # 끝의 괄호 설명문(리마인더) 제거
     tags = re.findall(r'⁅(自動|永続|保持称号開放中|自|永)⁆', ln)
     body = re.sub(r'^(?:⁅(?:自動|永続|保持称号開放中|自|永)⁆)+', '', ln).strip()
