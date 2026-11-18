@@ -33,7 +33,7 @@ _DESC_TOKENS = [
     (r'【スキル】を持つ', lambda m, f: f.__setitem__('skill', 1)),
     (r'(ハート|スペード|ダイヤ|クラブ)か(ハート|スペード|ダイヤ|クラブ)(?:の)?', lambda m, f: f.__setitem__('attr', [m.group(1), m.group(2)])),
     (r'(赤|青|白|黒)か(赤|青|白|黒)の', lambda m, f: f.__setitem__('color', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[x] for x in m.groups()])),
-    (r'エースか⁅バスターアイコン⁆の', lambda m, f: f.__setitem__('aceOrBuster', 1)),
+    (r'エースか⁅バスターアイコン⁆の|エースカードか⁅バスターアイコン⁆', lambda m, f: f.__setitem__('aceOrBuster', 1)),
     (r'魔法', lambda m, f: f.__setitem__('magic', 1)),
     (r'(赤|青|白|黒)か⁅(ハート|スペード|ダイヤ|クラブ)⁆の', lambda m, f: f.__setitem__('colorOrAttr', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)], m.group(2)])),
     (r'クラスカード(?:を持つ|がついている|のついた|がついた)', lambda m, f: f.__setitem__('hasClass', 1)),
@@ -61,7 +61,12 @@ _DESC_TOKENS = [
     (r'アイコン能力を持つ', lambda m, f: f.__setitem__('hasIcon', 1)),
     (r'(赤|青|白|黒)の', lambda m, f: f.__setitem__('color', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)]])),
     (r'⁅バスターアイコン⁆を持つ|バスターの|⁅バスターアイコン⁆の?', lambda m, f: f.__setitem__('icon', 'buster')),
-    (r'⁅ショットアイコン⁆の?', lambda m, f: f.__setitem__('icon', 'shot')),
+    (r'⁅ショットアイコン⁆の?|⁅☆⁆の?', lambda m, f: f.__setitem__('icon', 'shot')),
+    (r'(赤|青|白|黒)でない', lambda m, f: f.__setitem__('notColor', {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)])),
+    (r'パワー(\d+)(?:の|で)', lambda m, f: f.__setitem__('powEQ', int(m.group(1)))),
+    (r'総?コスト(\d+)(?:ちょうど)?(?:の|で)', lambda m, f: f.__setitem__('costEQ', int(m.group(1)))),
+    (r'「([^」]+)」(?:か「([^」]+)」)+(?:の)?', lambda m, f: f.__setitem__('nameAny', re.findall(r'「([^」]+)」', m.group(0)))),
+    (r'「([^」]+)」(?=を\d|を全て|をN)', lambda m, f: f.__setitem__('name', m.group(1))),
     (r'⁅ショットアイコン⁆を持つ|ショットの', lambda m, f: f.__setitem__('icon', 'shot')),
     (r'で|、|かつ|の', lambda m, f: None),
 ]
@@ -321,6 +326,15 @@ def eff_patterns():
         sub = parse_effects(m.group('x'))
         return sub and {'op': 'watch', 'on': 'win', 'do': sub}
     add(r'(?:そのターン中、)?対象がバトルに勝利した時、(?P<x>[^。]+)(?:。|$)', twin)
+    add(r'あなたの山札(?:を|の)下から(?P<n>\d+)枚(?:を)?ドロップ' + V('する', 'し') + END, lambda m: {'op': 'millBottom', 'n': int(m.group('n'))})
+    add(_DUR + r'(?P<to>[^、。]*?)はいかなる方法でもドロップしない' + END, lambda m: subj(m.group('to')) and {'op': 'kw', 'kw': 'indestructible', 'to': subj(m.group('to'))})
+    add(r'(?:そのターン中、)?あなたはライフの枚数に関わらずレッドゾーンとなる' + END, lambda m: {'op': 'turnFlag', 'flag': 'red'})
+    add(_DUR + r'(?:さらに)?(?P<mods>(?:パワー|ヒット)を[+-]\d+)' + END, lambda m: {'op': 'pow' if m.group('mods').startswith('パワー') else 'hit', 'n': int(re.search(r'[+-]\d+', m.group('mods')).group()), 'to': '$prev'})
+    add(_DUR + r'(?P<to>このユニット|対象)は(?P<mods>(?:パワー|ヒット)を[+-]\d+)' + END, lambda m: {'op': 'pow' if m.group('mods').startswith('パワー') else 'hit', 'n': int(re.search(r'[+-]\d+', m.group('mods')).group()), 'to': subj(m.group('to'))})
+    add(r'あなたの手札を(?P<n>\d+)枚(?P<upto>まで)?公開' + V('する', 'し') + END, lambda m: {'op': 'revealHand', 'n': int(m.group('n')), 'f': {}, **({'opt': 1} if m.group('upto') else {})})
+    add(r'あなたの手札を(?P<n>\d+)枚リムーブ' + V('する', 'し') + MAY + END, lambda m: {'op': 'pick', 'from': 'hand', 'to': 'remove', 'f': {}, 'n': int(m.group('n')), 'upto': 1 if m.group('may') else 0})
+    add(r'あなたの(?P<z>ドロップゾーン|手札|エナジーゾーン)の、?' + DESC + r'(?:' + NOUN[:-1] + r'))?を(?P<n>\d+)枚、コストを払わず(?:に)?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': {'ドロップゾーン': 'drop', '手札': 'hand', 'エナジーゾーン': 'energy'}[m.group('z')], 'f': noun_filter(f, m.group('noun')), 'may': 1})(parse_desc(m.group('d'))))
     # 라이프 맨 앞 보기 / 공개
     add(r'あなたのライフの先頭を見る' + END, lambda m: {'op': 'peekLife'})
     # 배틀 상대 중 조건에 맞으면 드롭
@@ -449,7 +463,7 @@ def eff_patterns():
             f['icon'] = 'buster'
         elif m.group('noun'):
             noun_filter(f, m.group('noun'))
-        dest = 'field' if '登場' in m.group('v') else 'life' if 'ライフ' in m.group('v') else 'energy' if 'エナジー' in m.group('v') else 'hand'
+        dest = 'field' if '登場' in m.group('v') else 'life' if 'ライフ' in m.group('v') else 'energy' if 'エナジー' in m.group('v') else 'remove' if 'リムーブ' in m.group('v') else 'hand'
         zone = {'ドロップゾーン': 'drop', '手札': 'hand', 'エナジーゾーン': 'energy', 'エナジー': 'energy'}[m.group('zone')]
         if zone == dest:
             return None
@@ -459,7 +473,7 @@ def eff_patterns():
         if m.group('may'):
             st['upto'] = 1
         return st
-    add(r'(?:あなたの)?(?P<zone>ドロップゾーン|手札|エナジーゾーン|エナジー)(?:の|から)(?P<d>(?:[^。を]|を持つ|を含む)*?)(?:' + NOUN[:-1] + r'|バスターアイコン))?を(?P<n>\d+)枚(?P<upto>まで)?(?:選んで)?(?:公開して)?(?P<rest>レストで)?(?P<v>手札に加え(?:る|)|登場させ(?:る|)|ライフの先頭に置(?:く|き)|エナジーゾーンに置(?:く|き))' + MAY + END, pick)
+    add(r'(?:あなたの)?(?P<zone>ドロップゾーン|手札|エナジーゾーン|エナジー)(?:の|から)(?P<d>(?:[^。を]|を持つ|を含む)*?)(?:' + NOUN[:-1] + r'|バスターアイコン))?を(?P<n>\d+)枚(?P<upto>まで)?(?:選んで)?(?:公開して)?(?P<rest>レストで)?(?P<v>手札に加え(?:る|)|登場させ(?:る|)|ライフの先頭に置(?:く|き|い)|エナジーゾーンに置(?:く|き|い)|リムーブ(?:する|し))' + MAY + END, pick)
 
     # 덱 위 N장 보고 고르기
     def look(m):
@@ -468,10 +482,13 @@ def eff_patterns():
             return None
         if m.group('noun'):
             noun_filter(f, m.group('noun'))
-        dest = 'field' if '登場' in m.group('v') else 'hand'
-        rest = {'ドロップ': 'drop', '山札の下に置': 'bottom', '望む順で山札の下に置': 'bottom', '山札の上に置': 'top', '望む順で山札の上に置': 'top'}[m.group('r')]
-        return {'op': 'look', 'n': int(m.group('n')), 'f': f, 'k': int(m.group('k')), 'to': dest, 'rest': rest}
-    add(r'あなたの山札(?:を|の)上から(?P<n>\d+)枚(?:見て|公開し)、その中(?:から|の)(?P<d>(?:[^。を]|を持つ|を含む)*?)(?:' + NOUN + r')?を(?P<k>\d+)枚まで(?:公開して)?(?P<v>手札に加え|登場させ)、残りを(?P<r>ドロップ|望む順で山札の下に置|山札の下に置|望む順で山札の上に置|山札の上に置)' + V('する', 'く', 'し', 'き') + END, look)
+        dest = 'field' if '登場' in m.group('v') else 'energy' if 'エナジー' in m.group('v') else 'hand'
+        r = m.group('r') or m.group('r2') or ''
+        rest = 'drop' if 'ドロップ' in r else 'top' if '上' in r else 'shuffle' if 'シャッフル' in r else 'energy' if 'エナジー' in r else 'bottom'
+        k = 99 if m.group('all') else int(m.group('k'))
+        return {'op': 'look', 'n': int(m.group('n')), 'f': f, 'k': k, 'to': dest, 'rest': rest, **({'rested': 1} if m.group('rst') else {})}
+    add(r'あなたの山札(?:を|の)上から(?P<n>\d+)枚(?:見て|公開し)、(?:その中(?:から|の)、?)?(?P<d>(?:[^。を]|を持つ|を含む)*?)(?:' + NOUN + r')?(?:を(?P<k>\d+)枚まで|(?P<all>全て)を)(?:公開して)?(?P<rst>レストで)?(?P<v>手札に加え|登場させ|エナジーゾーンに置き)、(?:残りを(?P<r>ドロップ|望む順で山札の下に置|山札の下に置|望む順で山札の上に置|山札の上に置|エナジーゾーンに置)' + V('する', 'く', 'し', 'き') + r'|(?P<r2>山札をシャッフル)' + V('する', 'し') + r')' + END,
+        lambda m: look(m) if m.group('r') or True else None)
     return P
 
 
