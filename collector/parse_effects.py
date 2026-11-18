@@ -34,6 +34,7 @@ _DESC_TOKENS = [
     (r'(ハート|スペード|ダイヤ|クラブ)か(ハート|スペード|ダイヤ|クラブ)(?:の)?', lambda m, f: f.__setitem__('attr', [m.group(1), m.group(2)])),
     (r'(赤|青|白|黒)か(赤|青|白|黒)の', lambda m, f: f.__setitem__('color', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[x] for x in m.groups()])),
     (r'エースか⁅バスターアイコン⁆の', lambda m, f: f.__setitem__('aceOrBuster', 1)),
+    (r'魔法', lambda m, f: f.__setitem__('magic', 1)),
     (r'(赤|青|白|黒)か⁅(ハート|スペード|ダイヤ|クラブ)⁆の', lambda m, f: f.__setitem__('colorOrAttr', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)], m.group(2)])),
     (r'クラスカード(?:を持つ|がついている|のついた|がついた)', lambda m, f: f.__setitem__('hasClass', 1)),
     (r'(?:カード名に)?「([^」]+)」(?:か「([^」]+)」)+を(?:名前に)?含む', lambda m, f: f.__setitem__('nameAny', re.findall(r'「([^」]+)」', m.group(0)))),
@@ -654,6 +655,9 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'このユニットの【CAD】でコマンドを解決した時', ('cad', 'self', None)),
+    (r'あなたが【CAD】でコマンドを解決した時', ('cad', 'own', None)),
+    (r'(?:あなたのターンに)?あなたがコマンドを解決した時', ('cmdResolved', 'me', None)),
     (r'相手が効果でカードを引いた時', ('effDraw', 'opp', None)),
     (r'あなたのユニットにクラスカードがついた時', ('classAttach', 'own', None)),
     (r'(?:あなたが)?スキルコストで、?手札かライフ(?:の|から)このカードをドロップした時', ('skillDrop', 'self', None)),
@@ -950,7 +954,37 @@ def parse_card(d):
             done.add(i)
             i += 1
             continue
+        m = re.fullmatch(r'(?P<h>⁅保持称号開放中⁆)?【CAD】(?P<spec>[^(]*?)(?:\(.*\))?', ln)
+        if m:
+            spec = m.group('spec')
+            f = {'magic': 1}
+            mm = re.fullmatch(r'(?:(?P<c1>赤|青|白|黒)(?:か(?P<c2>赤|青|白|黒))?(?:で|の))?(?:コスト(?P<n>\d+)(?P<le>以下)?)?(?P<shot>ショットアイコン)?', spec)
+            if mm:
+                CL = {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}
+                if mm.group('c1'):
+                    f['color'] = [CL[x] for x in (mm.group('c1'), mm.group('c2')) if x]
+                if mm.group('n'):
+                    f['costLE' if mm.group('le') else 'costEQ'] = int(mm.group('n'))
+                if mm.group('shot'):
+                    f['icon'] = 'shot'
+                d['cad'] = f
+                abs_.append({'k': 'auto', 'on': 'attack', 'src': 'self', 'if': ([{'hold': 1}] if m.group('h') else []) + [{'cadOk': 1}],
+                             'do': [{'op': 'playFree', 'from': 'hand', 'f': f, 'may': 1, 'cad': 1}], 'li': [i]})
+                done.add(i)
+                i += 1
+                continue
+        if re.fullmatch(r'⁅永続⁆あなたのテリトリーが開放されていないなら、このユニットの【CAD】は使えない。?', ln):
+            d['cadNeedsTerr'] = 1
+            done.add(i)
+            i += 1
+            continue
+        if re.fullmatch(r'⁅永続⁆あなたのテリトリー開放中なら、このユニットの【CAD】でプレイする魔法カードは手札とエナジーから選べる。?', ln):
+            abs_.append({'k': 'perm', 'if': [{'terr': 1}], 'do': [{'op': 'rule', 'rule': 'cadEnergy'}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
         if ln in ('【魔法】',):
+            d['magic'] = 1
             done.add(i)
             i += 1
             continue
