@@ -7,6 +7,7 @@
   {li:[원문 줄 번호], k:'auto'|'perm'|'play', on:발동 시점, src:'self'|'own'|'ownAce'|'opp',
    if:[조건], once:1, cost:[비용], do:[단계]}
 """
+import json
 import re, unicodedata
 
 N = lambda t: unicodedata.normalize('NFKC', t)
@@ -43,6 +44,7 @@ _DESC_TOKENS = [
     (r'(?:カード名に)?「([^」]+)」を(?:名前に)?含む', lambda m, f: f.__setitem__('name', m.group(1))),
     (r'カード名に、', lambda m, f: None),
     (r'(ハート|スペード|ダイヤ|クラブ)で', lambda m, f: f.__setitem__('attr', [m.group(1)])),
+    (r'⁅?(バスター|ショット)アイコン⁆?(?:の)?(?=$)', lambda m, f: f.__setitem__('icon', 'buster' if m.group(1) == 'バスター' else 'shot')),
     (r'【(?!ブライト)([^】]+)】を持つ', lambda m, f: f.__setitem__('kwText', m.group(1))),
     (r'(赤|青|白|黒)(?:で|の)(?!な)', lambda m, f: f.__setitem__('color', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)]])),
     (r'(赤|青|白|黒)でない、?', lambda m, f: f.__setitem__('notColor', {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)])),
@@ -401,6 +403,9 @@ def eff_patterns():
     add(r'あなたのドロップゾーンのクラスカードを望む枚数、このユニットにつけ' + V('る', '') + END, lambda m: {'op': 'classFromDrop', 'n': 99, 'to': 'self'})
     add(r'ドロップしたカードと同じコストで(?P<c>赤|青|白|黒)のコマンドカードを1枚、あなたのドロップゾーンからコストを払わず(?:に)?プレイ' + V('する', 'し') + MAY + END,
         lambda m: {'op': 'playFree', 'from': 'drop', 'f': {'color': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]], 'type': 'command', 'costFromBright': 1}, 'may': 1})
+    add(r'『(?P<x>[^』]+?)。?』を(?P<n>\d+)回行' + V('う', 'い') + END, lambda m: (lambda r: r is not None and r * int(m.group('n')))(parse_effects(m.group('x'))))
+    add(r'あなたのドロップゾーンの(?P<d>[^、。]+?)を(?P<n>\d+)枚(?P<upto>まで)?手札に(?:戻|加え)' + V('す', 'し', 'る', '') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'drop', 'to': 'hand', 'f': f, 'n': int(m.group('n')), 'upto': 1 if m.group('upto') or m.group('may') else 0})(_zdesc(m.group('d'))))
     MV = {'手札に戻': 'bounce', '山札の下に置': 'deckBottom', '山札の上に置': 'deckTop', 'ライフの先頭に置': 'life', 'エナジーゾーンに置': 'energy', 'ドロップさせ': 'drop', 'リムーブ': 'remove'}
     LB = {'bounce': '패로 되돌림', 'deckBottom': '덱 맨 아래', 'deckTop': '덱 맨 위', 'life': '라이프 맨 앞', 'energy': '에너지 존', 'drop': '드롭', 'remove': '리무브'}
     def or_move(m):
@@ -609,8 +614,17 @@ def parse_cond(t):
     t = t.strip('、')
     if t.endswith('てい'):
         t += 'る'
+    t = re.sub(r'ていた$', 'ている', t)
+    if re.search(r'てい$', t):
+        t += 'る'
+    elif re.search(r'(?:し|引い|置い|加え|つけ|着せ|戻し|かっ|させ|入れ替え)$', t) and not t.endswith('ない'):
+        t += 'た'   # 「~したら」의 어간
+    t = re.sub(r'していて、', 'しているかつ', t)
+    t = re.sub(r'(?<=に)いて、', 'いるかつ', t)
+    t = re.sub(r'着ていて', '着ているかつこのユニットが', t)
     t = re.sub(r'クラスカードが(\d+)枚以上ついたこのユニットがレストしている', r'このユニットにつけたクラスカードが\1枚以上かつこのユニットがレストしている', t)
-    if t.startswith('あなたの、'):   # 「あなたの、手札が1枚以下でテリトリー開放中」
+    t = re.sub(r'^あなたの、(称号「[^」]+」か(?:称号)?「[^」]+」のテリトリー開放中)', r'あなたの\1', t)
+    if t.startswith('あなたの、') and not re.match(r'あなたの、称号「[^」]+」か', t):   # 「あなたの、手札が1枚以下でテリトリー開放中」
         xs = re.split(r'で(?=テリトリー|ライフ|手札|ドロップ|エナジー|称号|リムーブ|フィールド)|(?<=がい)て(?=テリトリー)', t[5:])
         xs = [x + 'る' if x.endswith('がい') else x for x in xs]
         t = 'かつ'.join('あなたの' + x if not x.startswith(('あなた', '相手')) else x for x in xs)
@@ -620,6 +634,56 @@ def parse_cond(t):
     _LAST.setdefault('cond', None)
     C = [
         (r'このターン(?:に)?あなたがコマンドをプレイしてい(?:る|た)', lambda m: {'cmdTurn': 1}),
+        (r'あなたのつけたログが(?P<n>\d+)枚より少ない', lambda m: {'logLT': int(m.group('n'))}),
+        (r'対象がフィールドにいる', lambda m: {'tOnField': 1}),
+        (r'このターン(?:に)?対象が相手プレイヤーにダメージを与えてい(?:る|た)', lambda m: {'tDealtPlayer': 1}),
+        (r'(?:それ|そのカード)が(?P<d>[^、。]+?)(?:カード)?', lambda m: (lambda f: f is not None and {'milled': f})(_zdesc(m.group('d')) if _zdesc(m.group('d')) is not None else _zdesc(m.group('d') + 'カード'))),
+        (r'(?:ドロップし|引い|手札に加え|加え|置い|つけ|リムーブし|公開し|登場させ|戻し|入れ替え|着せ|開放し|プレイし|レストし|あなたのユニットをレストし)た', lambda m: {'did': 1}),
+        (r'(?:リムーブ|公開|ドロップ)しない|(?:戻さ|引か|公開し)なかった|的中しなかった', lambda m: {'did': 0}),
+        (r'(?P<c>赤|青|白|黒)のカードを(?P<n>\d+)枚ドロップした', lambda m: {'milledN': {'f': {'color': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]]}, 'n': int(m.group('n'))}}),
+        (r'(?P<l>(?:(?:赤|青|白|黒)、?)+)のカードをそれぞれ別にドロップした', lambda m: {'milledEach': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c] for c in re.findall('[赤青白黒]', m.group('l'))]}),
+        (r'(?P<d>[^、。]+?)を(?P<n>\d+)枚以上公開した', lambda m: (lambda f: f is not None and {'milledN': {'f': f, 'n': int(m.group('n'))}})(_zdesc(m.group('d')))),
+        (r'(?P<n>\d+)色リムーブした', lambda m: {'milledColorsGE': int(m.group('n'))}),
+        (r'このユニットがこのターン(?:に)?アタックしている', lambda m: {'selfAttackedTurn': 1}),
+        (r'このターン(?:に)?あなたのエースが登場している', lambda m: {'aceEnteredTurn': 1}),
+        (r'このターン(?:に)?あなたのユニットが登場していない', lambda m: {'ownEnteredTurnNot': 1}),
+        (r'このターン(?:に)?あなたの他のユニットが登場している', lambda m: {'otherEntered': 1}),
+        (r'このターン(?:に)?相手のユニットがドロップされている', lambda m: {'oppDroppedTurn': 1}),
+        (r'そのターンに相手のユニットが(?P<n>\d+)枚以上登場している', lambda m: {'oppEnteredGE': int(m.group('n'))}),
+        (r'このターン(?:に)?あなたのライフ(?:ゾーン)?から(?:ドロップゾーンに)?(?:⁅バスターアイコン⁆|⁅B⁆)が(?:ドロップされ|ドロップし|置かれ)てい(?:る|た)', lambda m: {'lifeBusterTurn': 1}),
+        (r'(?:このターン(?:に)?)?あなたのユニットが【ブライト】してい(?:る|た)', lambda m: {'brightTurn': 1}),
+        (r'このターン(?:に)?あなたが[【⁅]結束[】⁆]でカードを引いてい(?:る|た)', lambda m: {'kessoDrew': 1}),
+        (r'(?:あなたの)?ドロップゾーンが(?P<n>\d+)枚以上', lambda m: {'dropGE': int(m.group('n'))}),
+        (r'バトル相手が⁅(?P<i>バスター|ショット)アイコン⁆', lambda m: {'vsF': {'icon': 'buster' if m.group('i') == 'バスター' else 'shot'}}),
+        (r'相手のユニットの枚数があなたのユニットより(?P<n>\d+)枚以上多い', lambda m: {'oppMoreBy': int(m.group('n'))}),
+        (r'(?:そのターン中、)?あなたの(?P<d>[^、。]*?)(?:ユニット)?がいる', lambda m: (lambda f: f is not None and {'exists': dict(f, side='own', type='unit')})(_zdesc(m.group('d')) if m.group('d') else {})),
+        (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットが(?P<n>\d+)枚以上', lambda m: (lambda f: f is not None and {'unitCountGE': {'f': dict(f, side='opp' if m.group('w') == '相手' else 'own', type='unit'), 'n': int(m.group('n'))}})(parse_desc(m.group('d')))),
+        (r'あなたの、?このユニットと共通の称号を持つテリトリー開放中', lambda m: {'hold': 1}),
+        (r'これが手札からプレイされた', lambda m: {'fromHand': 1}),
+        (r'対象が(?P<k>スタンド|レスト)している', lambda m: {'tRested': 1 if m.group('k') == 'レスト' else 0}),
+        (r'このターン(?:に)?あなたがカードを(?P<n>\d+)枚以上プレイしている', lambda m: {'playedGE': int(m.group('n'))}),
+        (r'あなたがこのターン(?:に)?コマンドを解決している', lambda m: {'cmdTurn': 1}),
+        (r'(?:この|あなたの)テリトリーがこのターン(?:に)?開放されていない', lambda m: {'terrOpenedTurnNot': 1}),
+        (r'このコマンドが【CAD】でプレイされ(?:た|ている)', lambda m: {'cadPlay': 1}),
+        (r'このコマンドをあなたのメインフェイズにプレイした', lambda m: {'playedMain': 1}),
+        (r'あなたのクラスカードのエナジーが(?P<n>\d+)枚以上', lambda m: {'classEnergyGE': int(m.group('n'))}),
+        (r'あなたの(?P<z>ドロップゾーン|リムーブゾーン)の(?P<d>[^、。]+?)が(?P<n>\d+)種類以上', lambda m: (lambda f: f is not None and {'zc': {'side': 'own', 'zone': m.group('z'), 'f': f, 'n': int(m.group('n')), 'cmp': 'ge', 'kinds': 1}})(_zdesc(m.group('d')))),
+        (r'(?P<l>(?:(?:ハート|スペード|ダイヤ|クラブ)か?)+)を1枚以上ドロップした', lambda m: {'milled': {'attr': re.findall('ハート|スペード|ダイヤ|クラブ', m.group('l'))}}),
+        (r'(?:ドロップさせ|この効果であなたのユニットを1枚以上レストし)た', lambda m: {'did': 1}),
+        (r'(?P<n>\d+)枚(?:登場させ|ドロップし|以上表にし|以上戻し)た|合計(?P<n2>\d+)枚以上戻した', lambda m: {'didN': int(m.group('n') or m.group('n2'))}),
+        (r'(?P<d>[^、。]+?)をリムーブした', lambda m: (lambda f: f is not None and {'milled': f})(_zdesc(m.group('d')))),
+        (r'対象が(?P<d>[^、。]+)', lambda m: (lambda f: f is not None and {'tF': f})(_zdesc(m.group('d')) if _zdesc(m.group('d')) is not None else parse_desc(m.group('d')))),
+        (r'(?:エースに)?つけた', lambda m: {'did': 1}),
+        (r'(?P<d>[^、。]+?)を置いた', lambda m: (lambda f: f is not None and {'milled': f})(_zdesc(m.group('d')))),
+        (r'相手ターン', lambda m: {'oppTurn': 1}),
+        (r'このターン(?:に)?あなたがテリトリーを開放している', lambda m: {'terrOpenedTurn': 1}),
+        (r'各プレイヤーのテリトリーが開放されている', lambda m: {'bothTerr': 1}),
+        (r'このユニットが手札から登場している', lambda m: {'fromHand': 1}),
+        (r'このターンこのユニットが効果でスタンドしていない', lambda m: {'notEffStood': 1}),
+        (r'相手の、?手札とユニットが合計(?P<n>\d+)枚以上', lambda m: {'oppHandUnitsGE': int(m.group('n'))}),
+        (r'あなたの(?P<l>(?:(?:赤|青|白|黒)と?)+)のエナジーがそれぞれある', lambda m: {'energyEach': {'colors': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c] for c in re.findall('[赤青白黒]', m.group('l'))], 'n': 1}}),
+        (r'あなたのリムーブゾーンに(?P<l>(?:⁅(?:スペード|ハート|ダイヤ|クラブ)⁆、?)+)がある', lambda m: {'removeAttrsEach': re.findall(r'スペード|ハート|ダイヤ|クラブ', m.group('l'))}),
+        (r'このカードと共通の称号を持つ(?:あなたの)?テリトリー(?:が)?開放中', lambda m: {'hold': 1}),
         (r'このターン(?:に)?あなたがコマンドをプレイしていない', lambda m: {'cmdTurnNot': 1}),
         (r'各プレイヤーのユニットが合計(?P<n>\d+)枚以上いる', lambda m: {'allUnitsGE': int(m.group('n'))}),
         (r'それぞれカード名が同じ相手のユニットが(?P<n>\d+)枚以上いる', lambda m: {'oppSameNameGE': int(m.group('n'))}),
@@ -688,7 +752,7 @@ def parse_cond(t):
         (r'あなたの伏せたカードが(?:ない|無い)', lambda m: {'setCount': 0}),
         (r'あなたの伏せたカードがある', lambda m: {'setHas': 1}),
         (r'(?:ドロップした|それらの)カードのコストの合計が(?P<n>\d+)以上', lambda m: {'milledCostGE': int(m.group('n'))}),
-        (r'(?P<d>[^、。]+?)をドロップした', lambda m: (lambda f: f is not None and {'milled': f})(parse_desc(m.group('d').replace('ユニットカード', 'ユニット') + 'の') if not m.group('d').endswith('カード') else noun_filter(parse_desc(re.sub(r'(ユニット|コマンド)?カード$', '', m.group('d'))) or {}, re.search(r'(ユニットカード|コマンドカード|カード)$', m.group('d')).group(1)))),
+        (r'(?P<d>[^、。]+?)を(?:手札から)?ドロップした', lambda m: (lambda f: f is not None and {'milled': f})(parse_desc(m.group('d').replace('ユニットカード', 'ユニット') + 'の') if not m.group('d').endswith('カード') else noun_filter(parse_desc(re.sub(r'(ユニット|コマンド)?カード$', '', m.group('d'))) or {}, re.search(r'(ユニットカード|コマンドカード|カード)$', m.group('d')).group(1)))),
         (r'このユニットが【(?P<n>[^】]+)】を着ている', lambda m: {'wearing': m.group('n').split('/')}),
         (r'このターン(?:に)?あなたがダメージを受けている', lambda m: {'meDmgTurn': 1}),
         (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
@@ -702,7 +766,7 @@ def parse_cond(t):
         (r'あなたが「[^」]+」', lambda m: {'never': 1}),
         (r'このターン(?:に)?あなたが【スカウト】している', lambda m: {'scoutedTurn': 1}),
         (r'あなたのドロップゾーンに(?P<l>(?:⁅(?:スペード|ハート|ダイヤ|クラブ)⁆、?)+)がそれぞれ別に1枚以上ある', lambda m: {'dropAttrsEach': re.findall(r'スペード|ハート|ダイヤ|クラブ', m.group('l'))}),
-        (r'あなたの、称号「(?P<a>[^」]+)」か(?:称号)?「(?P<b>[^」]+)」のテリトリー開放中', lambda m: {'terrTitleAny': [m.group('a'), m.group('b')]}),
+        (r'あなたの、?称号「(?P<a>[^」]+)」か(?:称号)?「(?P<b>[^」]+)」のテリトリー開放中', lambda m: {'terrTitleAny': [m.group('a'), m.group('b')]}),
         # 일반 장수 조건: 「あなたのリムーブゾーンのエースカードが2枚以上」「相手の表のエナジーが3枚以下」
         (r'(?P<w>あなた|相手)の(?P<z>ドロップゾーン|リムーブゾーン|手札|ライフ|表のエナジー|裏のエナジー|エナジー|他のユニット|ユニット)(?:の(?P<d>[^、。]*?))?が(?:合計)?(?P<n>\d+)枚(?P<c>以上|以下)?',
          lambda m: (lambda f: f is not None and {'zc': {'side': 'opp' if m.group('w') == '相手' else 'own', 'zone': m.group('z'), 'f': f, 'n': int(m.group('n')), 'cmp': 'le' if m.group('c') == '以下' else 'ge' if m.group('c') else 'eq'}})(_zdesc(m.group('d')))),
@@ -822,6 +886,10 @@ def _resolve_prev(seq, ctx):
     for st in ctx:
         if st.get('op') in ('pow', 'hit', 'kw', 'dmg') and st.get('to') not in (None, '$prev'):
             last = st
+    if last is None:   # 수정 단계가 없으면 앞에서 다룬 유닛 (例: 「このユニットをスタンドし、…さらにヒットを+1」)
+        for st in ctx:
+            if st.get('op') in ('stand', 'rest', 'tgt') and st.get('to') in ('self', 'T') or st.get('op') == 'tgt':
+                last = {'op': 'pow', 'to': 'T' if st.get('op') == 'tgt' else st.get('to')}
     for st in seq:
         if st.get('op') == 'if':
             _resolve_prev(st.get('then', []), ctx + [x for x in seq if x is not st])
@@ -927,7 +995,7 @@ def _infer_acts(frag):
             acts.append((f'{who}{label.replace("하기", "")}{"하기" if label.endswith("하기") else ""}', [dict(st, to={'all': tg['all']})]))
         else:
             acts.append((f'{who}을 골라{label}', [dict(tg), dict(st, to='T')]))
-    if re.search(r'手札に戻', fr):
+    if re.search(r'手札に戻', fr) and not re.search(r'ドロップゾーン[^、。]*?手札に戻', fr):
         unit(' 패로 되돌리기', {'op': 'bounce'})
     if re.search(r'(?:ユニット|対象|それ|エース)[^、。]*?をドロップ(?:させ|する|し)|ドロップさせ', fr) and not re.search(r'手札を\d+枚ドロップ|ライフの先頭をドロップ|山札を上から', fr):
         unit(' 드롭시키기', {'op': 'drop'})
@@ -961,7 +1029,7 @@ def _infer_acts(frag):
         acts.append(('드롭 존에서 유닛 1장 등장시키기', [{'op': 'pick', 'from': 'drop', 'to': 'field', 'f': {'type': 'unit'}, 'n': 1, 'upto': 1}]))
     if re.search(r'エナジー[^。]*?登場させ', fr) and 'ドロップゾーン' not in fr:
         acts.append(('에너지에서 유닛 1장 등장시키기', [{'op': 'pick', 'from': 'energy', 'to': 'field', 'f': {'type': 'unit'}, 'n': 1, 'upto': 1}]))
-    if re.search(r'ドロップゾーン[^。]*?手札に加え', fr):
+    if re.search(r'ドロップゾーン[^。]*?手札に(?:加え|戻)', fr):
         acts.append(('드롭 존에서 카드 1장 패에 넣기', [{'op': 'pick', 'from': 'drop', 'to': 'hand', 'f': {}, 'n': 1, 'upto': 1}]))
     if re.search(r'山札[^。]*?(?:見|公開)[^。]*?手札に加え', fr):
         k = n(r'上から(\d+)枚', 3)
@@ -1004,6 +1072,24 @@ def _infer_acts(frag):
     if re.search(r'山札をシャッフル', fr) and not re.search(r'上から\d+枚', fr):
         acts.append(('덱 섞기', [{'op': 'shuffle'}]))
     return acts
+
+
+_CONDMARK = re.compile(r'(?:^|、)(?:(?P<c>(?:[^、。]*?いて、)?[^、。]*?)(?:なら(?![なずば])|(?<!そうし)(?<=[しいっけえきせ])たら)、?|(?P<did>そうしたら)、)')
+
+
+def _cond_split(seg):
+    """조각 안의 첫 조건을 떼어 냄 -> (앞, 조건|None, 물어볼 조건문|None, 뒤) | None"""
+    m = _CONDMARK.search(seg)
+    if not m or not seg[m.end():].strip('、'):
+        return None
+    if m.group('did'):
+        return seg[:m.start()], [{'did': 1}], None, seg[m.end():]
+    c = m.group('c')
+    if not c or re.search(r'対象と(?:し|する)$|ダメージを与え(?!てい)', c):
+        return None
+    ct = c + ('た' if re.search(r'たら、?$', m.group(0)) and re.search(r'[しいっけえきせ]$', c) else '')
+    cc = parse_cond(ct)
+    return seg[:m.start()], cc, (None if cc is not None else c), seg[m.end():]
 
 
 def _guide(frag):
@@ -1064,8 +1150,9 @@ def _parse_seq(t, steps=None):
                 continue
         # 조건 분기: 「Xなら、」
         m = re.match(r'(?P<c>[^。]*?)(?:なら|ならば|場合|(?<!そうし)たら)、', t)
-        if m and not re.search(r'対象と|ダメージ|を\d+枚', m.group('c')):
-            c = parse_cond(m.group('c'))
+        if m and not re.search(r'対象と(?:し|する)|ダメージを与え(?!てい)|\d+ダメージ|を\d+枚(?!以上|以下)', m.group('c')):
+            ctext = m.group('c') + ('た' if m.group(0).endswith('たら、') and re.search(r'[しいっけえきせ]$', m.group('c')) else '')
+            c = parse_cond(ctext)
             ask = c is None and _LEN['on'] and not re.search(r'時、|(?:し|き|せ|け|い)、', m.group('c'))
             if ask:
                 c = [{'ask': m.group('c')}]
@@ -1081,10 +1168,19 @@ def _parse_seq(t, steps=None):
                     steps.append({'op': 'if', 'c': c, 'then': [{'op': 'confirm', 'text': '패에 넣는 대신 등장시킬까요?', 'alt': 1, 'no': [prev]}, alt2], 'else': [prev]})
                     continue
                 alt = inner.startswith('代わりに')
+                mel = re.search(r'、(?:違う|それ以外|[^、。]*でない)なら、?', inner) if not alt else None
+                els = None
+                if mel:
+                    els = parse_effects(inner[mel.end():])
+                    if els is not None:
+                        inner = inner[:mel.start()]
                 sub = parse_effects(inner[4:] if alt else inner)
                 if sub is None:
                     return None
                 _resolve_prev(sub, steps)
+                if els is not None and not alt:
+                    steps.append({'op': 'askIf', 'jp': m.group('c'), 'then': sub, 'else': els} if ask else {'op': 'if', 'c': c, 'then': sub, 'else': els})
+                    continue
                 if alt:
                     if not steps:
                         return None
@@ -1125,6 +1221,26 @@ def _parse_seq(t, steps=None):
                     cut = k
                     break
             frag = seg if cut is None else seg[:cut]
+            # 고르기 전에 조각 안의 조건을 떼어 냄: 판단할 수 있으면 게임이 확인, 아니면 물어봄
+            cs = _cond_split(seg)
+            if cs:
+                pre, cc, ask_c, post = cs
+                pre_steps = _parse_seq(pre, []) if pre.strip('、') else []
+                mel = re.search(r'、(?:違う|それ以外|[^、。]*でない)なら、?', post)
+                else_steps = None
+                if mel:
+                    else_steps = _parse_seq(post[mel.end():], [])
+                    if else_steps is not None:
+                        post = post[:mel.start()]
+                post_steps = _parse_seq(post, []) if post.strip('、') else []
+                if pre_steps is not None and post_steps:
+                    steps.extend(pre_steps)
+                    node = {'op': 'askIf', 'jp': ask_c, 'then': post_steps} if ask_c else {'op': 'if', 'c': cc, 'then': post_steps}
+                    if else_steps:
+                        node['else'] = else_steps
+                    steps.append(node)
+                    t = t[len(seg):]
+                    continue
             g = _guide(frag)
             if g is None and cut is not None:
                 frag = seg
@@ -2191,27 +2307,54 @@ def parse_card(d):
     if len(play) > 1:
         play[0]['li'] = sorted(sum((m['li'] for m in play), []))
         mts = [m for m in mts if m['on'] != 'play'] + [play[0]]
-    # 그래도 못 읽은 줄: 시점을 알면, 글에서 추정한 처리들을 원하는 만큼 골라 실행 (직접 처리 창은 마지막 수단)
+    # 그래도 못 읽은 줄: 시점을 알면 문장마다 다시 읽음.
+    #  - 읽을 수 있는 문장·조건은 자동 (조건은 게임이 판단)
+    #  - 못 읽은 문장만 글에서 추정한 처리를 골라 실행 (직접 처리 창은 마지막 수단)
     rest_mts = []
     for mt in mts:
         body = ''.join(lines[i] for i in mt['li'] if i < len(lines))
         body = re.sub(r'^(?:⁅[^⁆]+⁆|【[^】]+】(?:〔[^〕]*〕)?(?:\([^)]*\))?:?)+', '', body)
         if mt['on'] != 'play':
             body = re.sub(r'^[^。]*?時、', '', body, count=1)
-        acts, seen = [], set()
-        for sent in [x for x in re.split(r'。', body) if x.strip()]:
-            for a in _infer_acts(re.sub(r'\([^)]*\)', '', sent)):
-                if a[0] not in seen:
-                    seen.add(a[0])
-                    acts.append(a)
-        if not acts or len(acts) > 7:
+        body = re.sub(r'\((?:[^()]|\([^)]*\))*\)', '', body)
+        steps, ok, partial = [], True, False
+        for sent in [x for x in body.split('。') if x.strip()]:
+            if re.fullmatch(r'この能力は各ターン.*?発動できる', sent):
+                continue
+            r = parse_effects_lenient(sent)
+            if r is not None:
+                steps += r
+                continue
+            # 문장 안의 조건은 게임이 판단(못 하면 물어봄)하고, 나머지만 고르기
+            cond, ask_c, rest, pre_steps = None, None, sent, []
+            cs = _cond_split(sent)
+            if cs:
+                pre, cond, ask_c, rest = cs
+                if pre.strip('、'):
+                    pre_steps = parse_effects_lenient(pre) or []
+            acts = _infer_acts(rest)
+            if len(acts) > 7:
+                ok = False
+                break
+            loop = {'op': 'choose', 'loop': 1, 'guide': rest[:60],
+                    'opts': [a[1] for a in acts] + [[{'op': 'manualOpen'}], []],
+                    'labels': [a[0] for a in acts] + ['다른 처리가 필요해요 (직접 처리 창 열기)', '처리 끝내기'],
+                    'text': '이 부분은 자동으로 다 읽지 못했어요. 카드 문구에 맞는 처리를 차례로 고르고, 다 했으면 \'처리 끝내기\'를 누르세요' if acts else '이 부분은 자동으로 처리할 수 없어요. 필요하면 직접 처리 창에서 처리하고, 해당 없으면 \'처리 끝내기\'를 누르세요'}
+            if not acts:
+                partial = True
+            steps += pre_steps
+            steps.append({'op': 'if', 'c': cond, 'then': [loop]} if cond else {'op': 'askIf', 'jp': ask_c, 'then': [loop]} if ask_c else loop)
+        if not ok or not steps:
             rest_mts.append(mt)
             continue
-        step = {'op': 'choose', 'loop': 1, 'guide': body[:60],
-                'opts': [a[1] for a in acts] + [[{'op': 'manualOpen'}], []],
-                'labels': [a[0] for a in acts] + ['다른 처리가 필요해요 (직접 처리 창 열기)', '처리 끝내기'],
-                'text': '이 능력은 자동으로 다 읽지 못했어요. 카드 문구에 맞는 처리를 차례로 고르고, 다 했으면 \'처리 끝내기\'를 누르세요'}
-        ab = {'k': 'play' if mt['on'] == 'play' else 'auto', 'if': mt['if'], 'do': [step], 'li': mt['li'], 'guided': 1}
+        _resolve_prev(steps, [])   # 문장마다 나눠 읽어도 「さらに」 등은 앞 문장의 대상·수정 종류를 이어받음
+        if '$prev' in json.dumps(steps):
+            rest_mts.append(mt)
+            continue
+        if not any(st.get('op') != 'choose' or st.get('opts', [[]])[0] != [{'op': 'manualOpen'}] for st in steps):
+            rest_mts.append(mt)   # 처리 후보가 하나도 없으면 직접 처리 그대로
+            continue
+        ab = {'k': 'play' if mt['on'] == 'play' else 'auto', 'if': mt['if'], 'do': steps, 'li': mt['li'], 'guided': 1, **({'partial': 1} if partial else {})}
         if mt['on'] != 'play':
             ab.update(on=mt['on'], src=mt['src'])
         abs_.append(ab)
@@ -2219,7 +2362,7 @@ def parse_card(d):
         for j2, k2 in joined.items():
             if k2 in mt['li']:
                 done.add(j2)
-        d.setdefault('gl', []).extend(mt['li'])
+        d.setdefault('pl' if partial else 'gl', []).extend(mt['li'])
     mts = rest_mts
     if mts:
         d['mt'] = mts
