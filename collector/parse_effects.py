@@ -46,6 +46,7 @@ _DESC_TOKENS = [
     (r'【コスプレ】を持つ', lambda m, f: f.__setitem__('cos', 1)),
     (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
     (r'【夢を見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
+    (r'⁅神衣⁆を持つ', lambda m, f: f.__setitem__('kamui', 1)),
     (r'【(マギア|マケイン|ログ)】を持つ', lambda m, f: f.__setitem__({'マギア': 'magia', 'マケイン': 'makein', 'ログ': 'log'}[m.group(1)], 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
     (r'(ハート|スペード|ダイヤ|クラブ)の', lambda m, f: f.__setitem__('attr', [m.group(1)])),
@@ -272,6 +273,16 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    # 필드에 뒷면으로 두기 (かぐや様)
+    add(r'(?:自分|あなた)の手札を(?P<n>\d+)枚(?P<upto>まで)?フィールドに伏せ' + V('る', '') + MAY + END, lambda m: {'op': 'setHand', 'n': int(m.group('n')), **({'may': 1} if m.group('upto') or m.group('may') else {})})
+    add(r'このユニットを(?:裏にして)?フィールドに伏せ' + V('る', '') + MAY + END, lambda m: {'op': 'setSelf', **({'may': 1} if m.group('may') else {})})
+    add(r'対象をフィールドに伏せ' + V('る', '') + END, lambda m: {'op': 'setT'})
+    add(r'あなたの伏せたカードの中から、?' + DESC + r'(?:' + NOUN[:-1] + r'))?を(?P<n>\d+)枚(?P<upto>まで)?(?P<rest>レストで)?登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'set', 'to': 'field', 'f': noun_filter(f, m.group('noun')), 'n': int(m.group('n')), 'upto': 1 if m.group('upto') else 0, **({'rested': 1} if m.group('rest') else {})})(parse_desc(m.group('d'))))
+    add(r'あなたの伏せたカード(?P<n>\d+)枚をドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'pick', 'from': 'set', 'to': 'drop', 'f': {}, 'n': int(m.group('n')), 'upto': 1, 'rec': 1})
+    add(r'あなたの伏せたカード(?:を)?全てをドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'setDropAll', **({'may': 1} if m.group('may') else {})})
+    add(r'あなたの伏せたカードを全てドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'setDropAll', **({'may': 1} if m.group('may') else {})})
+    add(r'相手の伏せたカード全てを手札に戻' + V('す', 'し') + END, lambda m: {'op': 'setBounceOpp'})
     add(r'あなたの裏のエナジーを(?P<n>\d+)枚(?:まで)?表に' + V('する', 'し') + END, lambda m: {'op': 'unflipEnergy', 'n': int(m.group('n'))})
     def at_end(m):
         sub = parse_effects(m.group('x'))
@@ -436,6 +447,11 @@ def parse_cond(t):
         (r'このユニットが【コスプレ】で登場した', lambda m: {'cos': 1}),
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
         (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
+        (r'あなたの伏せたカードが(?:ない|無い)', lambda m: {'setCount': 0}),
+        (r'あなたの伏せたカードがある', lambda m: {'setHas': 1}),
+        (r'(?:ドロップした|それらの)カードのコストの合計が(?P<n>\d+)以上', lambda m: {'milledCostGE': int(m.group('n'))}),
+        (r'(?P<d>[^、。]+?)をドロップした', lambda m: (lambda f: f is not None and {'milled': f})(parse_desc(m.group('d').replace('ユニットカード', 'ユニット') + 'の') if not m.group('d').endswith('カード') else noun_filter(parse_desc(re.sub(r'(ユニット|コマンド)?カード$', '', m.group('d'))) or {}, re.search(r'(ユニットカード|コマンドカード|カード)$', m.group('d')).group(1)))),
+        (r'このユニットが【(?P<n>[^】]+)】を着ている', lambda m: {'wearing': m.group('n').split('/')}),
         (r'このターン(?:に)?あなたがダメージを受けている', lambda m: {'meDmgTurn': 1}),
         (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
         (r'このターン(?:に)?あなたの他のユニットが登場している', lambda m: {'otherEntered': 1}),
@@ -666,6 +682,8 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'(?:あなたのターンに)?あなたがカードをフィールドに伏せた時', ('setCard', 'me', None)),
+    (r'フィールドに伏せられたこのカードがドロップされた時', ('setDrop', 'self', None)),
     (r'あなたのエースが【マギア】でエナジーを裏にした時', ('magiaFlip', 'ownAce', None)),
     (r'このカードを【夢を見ない】で公開してドロップした時', ('yumemiDrop', 'self', None)),
     (r'このユニットの【CAD】でコマンドを解決した時', ('cad', 'self', None)),
@@ -699,6 +717,10 @@ def parse_trigger(t):
             return None
         conds += c
         t = t[m.end():]
+    mw = re.match(r'、?((?:【[^】]+】か?)+)を着ている(?=このユニット)', t)
+    if mw:
+        conds.append({'wearing': re.findall(r'【([^】]+)】', mw.group(1))})
+        t = t[mw.end():]
     for rx, (on, src, extra) in TRIGGERS:
         m = re.fullmatch(rx, t)
         if m:
@@ -1030,6 +1052,43 @@ def parse_card(d):
             else:
                 mts.append({'on': on, 'src': 'self', 'if': [], 'li': rng})
             i = j
+            continue
+        # 【恋愛頭脳戦】: 등장 시 패 1장을 필드에 뒷면으로 둘 수 있음
+        if re.fullmatch(r'【恋愛頭脳戦】(?:\(.*\))?', ln):
+            d['renai'] = 1
+            abs_.append({'k': 'auto', 'on': 'enter', 'src': 'self', 'if': [], 'do': [{'op': 'setHand', 'n': 1, 'may': 1}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
+        # 뒷면으로 둔 이 카드를 코스트 없이 플레이할 수 있는 때
+        m = re.fullmatch(r'(?:(?P<c>[^。]*?)なら、)?伏せられたこのカードは(?P<w>相手エンドフェイズ|自分のメインフェイズ)にコストを払わずプレイできる。?', ln)
+        if m:
+            c = parse_cond(m.group('c').replace('このターンにあなたがダメージを受けている', 'このターンあなたがダメージを受けている')) if m.group('c') else []
+            if c is not None:
+                d['setPlay'] = {'when': 'oppEnd' if '相手' in m.group('w') else 'myMain', 'if': c}
+                done.add(i)
+            i += 1
+            continue
+        # 【神衣-鮮血】【神衣-純潔】: 내가 플레이한 그 커맨드를 이 유닛에 겹쳐 입힐 수 있음
+        m = re.fullmatch(r'((?:【神衣-[^】]+】)+)(?:\(.*\))?', ln)
+        if m:
+            d['kamui'] = re.findall(r'【神衣-([^】]+)】', m.group(1))
+            done.add(i)
+            i += 1
+            continue
+        # 입히는 커맨드: 【鮮血】着ているユニットのパワーを+3000
+        m = re.fullmatch(r'【(?P<n>[^】]+)】着ているユニットの(?P<mods>(?:パワー|ヒット)を[+-]\d+(?:、(?:パワー|ヒット)を[+-]\d+)?)。?', ln)
+        if m:
+            d['dress'] = m.group('n').split('/')
+            abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'pow' if k == 'パワー' else 'hit', 'n': int(v), 'to': 'host'} for k, v in re.findall(r'(パワー|ヒット)を([+-]\d+)', m.group('mods'))], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
+        m = re.fullmatch(r'あなたの(?P<d>[^。]*?)ユニットにこのカードを重ねて着せてよい。?', ln)
+        if m and parse_desc(m.group('d')) is not None:
+            d['dressAny'] = parse_desc(m.group('d'))
+            done.add(i)
+            i += 1
             continue
         if re.fullmatch(r'【ログ】(?:\(.*\))?', ln):
             d['log'] = 1
