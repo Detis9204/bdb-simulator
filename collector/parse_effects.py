@@ -45,6 +45,7 @@ _DESC_TOKENS = [
     (r'【ブライト】を持つ', lambda m, f: f.__setitem__('bright', 1)),
     (r'【コスプレ】を持つ', lambda m, f: f.__setitem__('cos', 1)),
     (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
+    (r'【夢を見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
     (r'アタック中の', lambda m, f: f.__setitem__('attacking', 1)),
     (r'(ハート|スペード|ダイヤ|クラブ)の', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'【(デコイ|ブリッツ|バーサーク)】を持つ', lambda m, f: f.__setitem__('kw', {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}[m.group(1)])),
@@ -270,6 +271,10 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    def at_end(m):
+        sub = parse_effects(m.group('x'))
+        return sub and {'op': 'delay', 'at': 'attackEnd', 'do': sub}
+    add(r'このアタック(?:の)?終了時、(?P<x>[^。]+)(?:。|$)', at_end)
     add(r'(?:そのターン中、)?あなたはダメージで(?:は)?敗北せず' + END, lambda m: {'op': 'turnFlag', 'flag': 'noLoseDmg'})
     add(r'(?:そのターン中、)?あなたはダメージで(?:は)?敗北しない' + END, lambda m: {'op': 'turnFlag', 'flag': 'noLoseDmg'})
     add(r'各プレイヤーは(?P<n>\d+)枚引' + V('く', 'き', 'いて') + MAY + END,
@@ -659,6 +664,7 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'このカードを【夢を見ない】で公開してドロップした時', ('yumemiDrop', 'self', None)),
     (r'このユニットの【CAD】でコマンドを解決した時', ('cad', 'self', None)),
     (r'あなたが【CAD】でコマンドを解決した時', ('cad', 'own', None)),
     (r'(?:あなたのターンに)?あなたがコマンドを解決した時', ('cmdResolved', 'me', None)),
@@ -987,6 +993,51 @@ def parse_card(d):
             continue
         if re.fullmatch(r'⁅永続⁆あなたのテリトリー開放中なら、このユニットの【CAD】でプレイする魔法カードは手札とエナジーから選べる。?', ln):
             abs_.append({'k': 'perm', 'if': [{'terr': 1}], 'do': [{'op': 'rule', 'rule': 'cadEnergy'}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
+        # 【夢を見ない】〔색/속성〕: 공격 시 덱 위 1장을 공개해서 드롭할 수 있고, 지정 색·속성이면 효과 발동
+        m = re.fullmatch(r'(?P<h>⁅保持称号開放中⁆)?【夢を見ない】〔(?P<spec>[^〕]+)〕(?:\([^)]*\))?:?(?P<x>.+)', ln)
+        if m:
+            d['yumemi'] = 1
+            CL = {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}
+            parts = m.group('spec').split('か')
+            f = {'color': [CL[x] for x in parts if x in CL]} if all(x in CL for x in parts) else {'attr': parts}
+            body = m.group('x')
+            if re.fullmatch(r'以下を1つ(?:選んで)?行う。?', body):
+                j = i + 1
+                opts = []
+                while j < len(lines) and lines[j].startswith('・'):
+                    opts.append(parse_effects(lines[j][1:]))
+                    j += 1
+                sub = [{'op': 'choose', 'opts': opts}] if opts and all(o is not None for o in opts) else None
+                rng = list(range(i, j))
+            else:
+                _LAST.clear()
+                sub = parse_effects(body)
+                if sub is not None and '$prev' in str(sub):
+                    sub = None
+                rng = [i]
+                j = i + 1
+            if sub is not None:
+                abs_.append({'k': 'auto', 'on': 'attack', 'src': 'self', 'if': [{'hold': 1}] if m.group('h') else [],
+                             'do': [{'op': 'yumemi', 'f': f, 'may': 1}, {'op': 'if', 'c': [{'did': 1}], 'then': sub}], 'li': rng})
+                done.update(rng)
+            else:
+                mts.append({'on': 'attack', 'src': 'self', 'if': [], 'li': rng})
+            i = j
+            continue
+        m = re.fullmatch(r'⁅永続⁆あなたの【夢を見ない】で公開されている(このカード|エースカード)は全ての色を持つ。?', ln)
+        if m:
+            if m.group(1) == 'このカード':
+                d['yumemiAll'] = 1
+            else:
+                abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'rule', 'rule': 'yumemiAce'}], 'li': [i]})
+            done.add(i)
+            i += 1
+            continue
+        if re.fullmatch(r'⁅永続⁆あなたの【夢を見ない】で公開されているコマンドカードは⁅スペード⁆⁅ハート⁆⁅ダイヤ⁆⁅クラブ⁆として扱う。?', ln):
+            abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'rule', 'rule': 'yumemiCmd'}], 'li': [i]})
             done.add(i)
             i += 1
             continue
