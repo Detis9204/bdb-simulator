@@ -273,6 +273,11 @@ def eff_patterns():
     add(r'あなたのつけた契約書を(?P<n>\d+)枚ドロップ' + V('する', 'し') + MAY + END, lambda m: {'op': 'contractDrop', 'n': int(m.group('n')), **({'may': 1} if m.group('may') else {})})
     add(r'相手のテリトリーにつけられている契約書を全てドロップ' + V('する', 'し') + END, lambda m: {'op': 'contractDrop', 'all': 1, 'who': 'opp'})
     add(r'あなたは追加の1ターンを行う' + END, lambda m: {'op': 'extraTurn'})
+    # 서로 파워만큼 데미지
+    add(r'あなたのユニット1枚と相手のユニット1枚を対象とし、それらは互いのパワー分、ダメージを与えあう' + END,
+        lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 0, 'save': 'A'}, {'op': 'tgt', 'f': {'side': 'opp', 'type': 'unit'}, 'n': 1, 'upto': 0, 'save': 'B'}, {'op': 'fight'}])
+    add(r'(?:レストしている)?ユニットを2枚対象とし、(?:それらは)?互いのパワー分、ダメージを与えあう' + END,
+        lambda m: [{'op': 'tgt', 'f': {'type': 'unit'}, 'n': 2, 'upto': 0}, {'op': 'fight'}])
     # 필드에 뒷면으로 두기 (かぐや様)
     add(r'(?:自分|あなた)の手札を(?P<n>\d+)枚(?P<upto>まで)?フィールドに伏せ' + V('る', '') + MAY + END, lambda m: {'op': 'setHand', 'n': int(m.group('n')), **({'may': 1} if m.group('upto') or m.group('may') else {})})
     add(r'このユニットを(?:裏にして)?フィールドに伏せ' + V('る', '') + MAY + END, lambda m: {'op': 'setSelf', **({'may': 1} if m.group('may') else {})})
@@ -447,6 +452,13 @@ def parse_cond(t):
         (r'このユニットが【コスプレ】で登場した', lambda m: {'cos': 1}),
         (r'このユニットにクラスカードがついている', lambda m: {'selfHasClass': 1}),
         (r'あなたの他のユニットがいない', lambda m: {'noOther': 1}),
+        (r'あなたのエナジーが(?P<n>\d+)色(?:以上)?', lambda m: {'energyColorsGE': int(m.group('n'))}),
+        (r'このターン(?:に)?あなたが【結束】でカードを引いている', lambda m: {'kessoDrew': 1}),
+        (r'このターン(?:に)?あなたのユニットが【ブライト】している', lambda m: {'brightTurn': 1}),
+        (r'あなたのリムーブゾーンが(?P<n>\d+)枚以上', lambda m: {'removeGE': int(m.group('n'))}),
+        (r'あなたのライフがイエローゾーン', lambda m: {'yellow': 1}),
+        (r'相手の手札が(?P<n>\d+)枚以下', lambda m: {'oppHandLE': int(m.group('n'))}),
+        (r'相手のユニットが(?P<n>\d+)枚以上', lambda m: {'oppUnitsGE': int(m.group('n'))}),
         (r'あなたの伏せたカードが(?:ない|無い)', lambda m: {'setCount': 0}),
         (r'あなたの伏せたカードがある', lambda m: {'setHas': 1}),
         (r'(?:ドロップした|それらの)カードのコストの合計が(?P<n>\d+)以上', lambda m: {'milledCostGE': int(m.group('n'))}),
@@ -682,6 +694,7 @@ TRIGGERS = [
     (r'エンドフェイズ以外にあなたのユニットが【コスプレ】で登場した時', ('enter', 'own', {'cos': 1, 'notEnd': 1})),
     (r'このユニットが【コスプレ】で手札に戻った時', ('cosReturn', 'self', None)),
     (r'このユニットにクラスカードがついた時', ('classAttach', 'self', None)),
+    (r'このカードがどこからでもリムーブされた時', ('removed', 'self', None)),
     (r'(?:あなたのターンに)?あなたがカードをフィールドに伏せた時', ('setCard', 'me', None)),
     (r'フィールドに伏せられたこのカードがドロップされた時', ('setDrop', 'self', None)),
     (r'あなたのエースが【マギア】でエナジーを裏にした時', ('magiaFlip', 'ownAce', None)),
@@ -828,6 +841,7 @@ def parse_perm(t):
         if mp:
             per = {'zone': {'エナジー': 'energy', '手札': 'hand', 'ドロップゾーンのカード': 'drop', 'ユニット': 'field', 'つけた契約書': 'contract'}[mp.group('z')], 'k': int(mp.group('k'))}
             sent = sent[mp.end():]
+        sent = re.sub(r'^あなたの、', 'あなたの', sent)
         m = re.fullmatch(r'(?P<to>[^、。]*?)の(?P<mods>(?:パワー|ヒット)を[+-]\d+(?:、(?:パワー|ヒット)を[+-]\d+)?)(?:する)?', sent)
         if m and per:
             to = subj(m.group('to'))
@@ -1250,14 +1264,26 @@ def parse_body(ln, d, skill):
 
 def _parse_body(ln, d, skill):
     gk = False
-    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET3\.0)】(?:\([^)]*\))?', ln)
-    if m:   # 我駆力: 이번 턴 데미지가 있었으면 유효 / INTERNET3.0: 레스트한 에너지가 3색 이상이면 유효
+    m = re.match(r'^((?:⁅保持称号開放中⁆)?)【(我駆力|INTERNET3\.0|特記事項(\d+)|怪異:([^】]+)|境界-([^】]+))】(?:\([^)]*\))?', ln)
+    kc = None
+    if m:   # 조건이 맞을 때만 유효한 작품 키워드
         gk = m.group(2)
-        d['gaku' if gk == '我駆力' else 'net3'] = 1
+        if gk == '我駆力':
+            d['gaku'] = 1; kc = {'dmgTurn': 1}               # 이번 턴 어느 플레이어든 데미지
+        elif gk.startswith('INTERNET'):
+            d['net3'] = 1; kc = {'net3': 1}                  # 레스트한 에너지 3색 이상
+        elif gk.startswith('特記事項'):
+            d['tokki'] = int(m.group(3)); kc = {'countGE': {'zone': 'drop', 'f': {'type': 'command'}, 'n': int(m.group(3))}}
+        elif gk.startswith('怪異'):
+            d['kaii'] = m.group(4).split('/'); kc = {'droppedAttr': m.group(4).split('/')}   # 이번 턴 내 해당 속성 카드가 드롭
+        else:
+            CL = {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}
+            cols = [CL[c] for c in m.group(5) if c in CL]
+            d['kyokai'] = m.group(5); kc = {'energyEach': {'colors': cols, 'n': 2}} if cols else {'energyColorsEq': 2}
         ln = m.group(1) + ln[m.end():]
     r = _parse_body2(ln, d, skill)
-    if r and gk:
-        r['if'] = r.get('if', []) + [{'dmgTurn': 1} if gk == '我駆力' else {'net3': 1}]
+    if r and kc:
+        r['if'] = r.get('if', []) + [kc]
     return r
 
 
