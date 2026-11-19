@@ -645,7 +645,8 @@ def parse_cond(t):
     t = t.replace('「エースか「', '「エース」か「')
     mm = re.search(r'(?:かつ|、)(?=あなたの、)', t)
     if mm and mm.start() > 0:   # 「このユニットがレストしていて、あなたの、テリトリー開放中で…」: 앞뒤를 따로 읽어 합침
-        a_, b_ = parse_cond(t[:mm.start()]), parse_cond(t[mm.end():])
+        a_t = re.sub(r'(が|し)(い)て$', r'\1\2る', t[:mm.start()])
+        a_, b_ = parse_cond(a_t), parse_cond(t[mm.end():])
         return None if a_ is None or b_ is None else a_ + b_
     t = re.sub(r'^あなたの、(称号「[^」]+」か(?:称号)?「[^」]+」のテリトリー開放中)', r'あなたの\1', t)
     if t.startswith('あなたの、') and not re.match(r'あなたの、称号「[^」]+」か', t):   # 「あなたの、手札が1枚以下でテリトリー開放中」
@@ -658,6 +659,10 @@ def parse_cond(t):
     _LAST.setdefault('cond', None)
     C = [
         (r'このターン(?:に)?あなたがコマンドをプレイしてい(?:る|た)', lambda m: {'cmdTurn': 1}),
+        (r'このターン(?:に)?あなたのユニットが卒業してい(?:る|た)', lambda m: {'hist': {'scope': 'turn', 'k': 'grad', 'side': 'own'}}),
+        (r'相手のエナジーがあなたのエナジーより多い', lambda m: {'cmp': {'a': {'k': 'oppEnergy'}, 'op': 'gt', 'b': {'k': 'myEnergy'}}}),
+        (r'このターン(?:に)?あなたがダメージを受けていない', lambda m: {'not': {'meDmgTurn': 1}}),
+        (r'このターン(?:に)?相手がダメージを受けていない', lambda m: {'not': {'oppDmgTurn': 1}}),
         # 수치 비교 (대상·공개/드롭한 카드·배틀 상대·에너지 장수)
         (r'対象のコストが公開したカードのコスト(?P<o>以下|以上)', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'le' if m.group('o') == '以下' else 'ge', 'b': {'k': 'milled', 'what': 'cost', 'agg': 'last'}}}),
         (r'対象がバトル相手(?:のユニット)?と同じコスト', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'eq', 'b': {'k': 'vs', 'what': 'cost'}}}),
@@ -745,7 +750,7 @@ def parse_cond(t):
         (r'このユニットが手札から登場している', lambda m: {'fromHand': 1}),
         (r'このターンこのユニットが効果でスタンドしていない', lambda m: {'notEffStood': 1}),
         (r'相手の、?手札とユニットが合計(?P<n>\d+)枚以上', lambda m: {'oppHandUnitsGE': int(m.group('n'))}),
-        (r'あなたの(?P<l>(?:(?:赤|青|白|黒)と?)+)のエナジーがそれぞれある', lambda m: {'energyEach': {'colors': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c] for c in re.findall('[赤青白黒]', m.group('l'))], 'n': 1}}),
+        (r'あなたの、?(?P<l>(?:(?:赤|青|白|黒)と?)+)のエナジーが(?:それぞれ)?ある', lambda m: {'energyEach': {'colors': [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c] for c in re.findall('[赤青白黒]', m.group('l'))], 'n': 1}}),
         (r'あなたのリムーブゾーンに(?P<l>(?:⁅(?:スペード|ハート|ダイヤ|クラブ)⁆、?)+)がある', lambda m: {'removeAttrsEach': re.findall(r'スペード|ハート|ダイヤ|クラブ', m.group('l'))}),
         (r'このカードと共通の称号を持つ(?:あなたの)?テリトリー(?:が)?開放中', lambda m: {'hold': 1}),
         (r'このターン(?:に)?あなたがコマンドをプレイしていない', lambda m: {'cmdTurnNot': 1}),
@@ -1217,9 +1222,9 @@ def _parse_seq(t, steps=None):
         if m and not re.search(r'対象と(?:し|する)|ダメージを与え(?!てい)|\d+ダメージ|を\d+枚(?!以上|以下)', m.group('c')):
             ctext = m.group('c') + ('た' if m.group(0).endswith('たら、') and re.search(r'[しいっけえきせ]$', m.group('c')) else '')
             c = parse_cond(ctext)
-            ask = c is None and _LEN['on'] and not re.search(r'時、|(?:し|き|せ|け|い)、', m.group('c'))
-            if ask:
-                c = [{'ask': m.group('c')}]
+            ask = False   # 조건을 못 읽으면 묻지 않고 이 문장은 못 읽은 것으로 둠
+            if c is None and _LEN['on']:
+                _FAIL['cond'] = m.group('c')
             if c is not None:
                 rest = re.sub(r'^その後、', '', t[m.end():])
                 # 같은 문장 끝(。)까지를 조건 안쪽으로
@@ -1243,15 +1248,15 @@ def _parse_seq(t, steps=None):
                     return None
                 _resolve_prev(sub, steps)
                 if els is not None and not alt:
-                    steps.append({'op': 'askIf', 'jp': m.group('c'), 'then': sub, 'else': els} if ask else {'op': 'if', 'c': c, 'then': sub, 'else': els})
+                    steps.append({'op': 'if', 'c': c, 'then': sub, 'else': els})
                     continue
                 if alt:
                     if not steps:
                         return None
                     prev = steps.pop()
-                    steps.append({'op': 'askIf', 'jp': m.group('c'), 'then': sub, 'else': [prev]} if ask else {'op': 'if', 'c': c, 'then': sub, 'else': [prev]})
+                    steps.append({'op': 'if', 'c': c, 'then': sub, 'else': [prev]})
                 else:
-                    steps.append({'op': 'askIf', 'jp': m.group('c'), 'then': sub} if ask else {'op': 'if', 'c': c, 'then': sub})
+                    steps.append({'op': 'if', 'c': c, 'then': sub})
                 continue
         for rx, fn in EFF:
             m = rx.match(t)
@@ -1289,6 +1294,9 @@ def _parse_seq(t, steps=None):
             cs = _cond_split(seg)
             if cs:
                 pre, cc, ask_c, post = cs
+                if ask_c:
+                    _FAIL['cond'] = ask_c
+                    return None
                 pre_steps = _parse_seq(pre, []) if pre.strip('、') else []
                 mel = re.search(r'、(?:違う|それ以外|[^、。]*でない)なら、?', post)
                 else_steps = None
@@ -1299,7 +1307,7 @@ def _parse_seq(t, steps=None):
                 post_steps = _parse_seq(post, []) if post.strip('、') else []
                 if pre_steps is not None and post_steps:
                     steps.extend(pre_steps)
-                    node = {'op': 'askIf', 'jp': ask_c, 'then': post_steps} if ask_c else {'op': 'if', 'c': cc, 'then': post_steps}
+                    node = {'op': 'if', 'c': cc, 'then': post_steps}
                     if else_steps:
                         node['else'] = else_steps
                     steps.append(node)
@@ -2010,10 +2018,10 @@ def parse_card(d):
                 opts.append(parse_effects_lenient(lines[j][1:]))
                 j += 1
             c = parse_cond(mrep.group('c'))
-            if all(o is not None for o in opts):
+            if all(o is not None for o in opts) and c is not None:
                 body = sum(opts, [])
                 again = ([{'op': 'confirm', 'text': '한 번 더 할까요?', 'alt': 1, 'no': []}] if mrep.group('may') else []) + body
-                tail = {'op': 'if', 'c': c, 'then': again} if c is not None else {'op': 'askIf', 'jp': mrep.group('c'), 'then': again}
+                tail = {'op': 'if', 'c': c, 'then': again} if c is not None else None
                 r = parse_body(mrep.group('h') + '__CHOOSE__', d, skill) or parse_body_lenient(mrep.group('h') + '__CHOOSE__', d, skill)
                 if r:
                     for k2, st in enumerate(r['do']):
@@ -2458,6 +2466,9 @@ def parse_card(d):
             cs = _cond_split(sent)
             if cs:
                 pre, cond, ask_c, rest = cs
+                if ask_c:
+                    ok = False
+                    break
                 if pre.strip('、'):
                     pre_steps = parse_effects_lenient(pre) or []
             acts = _infer_acts(rest)
@@ -2471,7 +2482,7 @@ def parse_card(d):
             if not acts:
                 partial = True
             steps += pre_steps
-            steps.append({'op': 'if', 'c': cond, 'then': [loop]} if cond else {'op': 'askIf', 'jp': ask_c, 'then': [loop]} if ask_c else loop)
+            steps.append({'op': 'if', 'c': cond, 'then': [loop]} if cond else loop)
         if not ok or not steps:
             rest_mts.append(mt)
             continue
@@ -2647,6 +2658,8 @@ def _parse_body2(ln, d, skill):
         if not tr:
             _FAIL['at'] = 'TRIG:' + m.group('t')
             ap = _approx_trigger(m.group('t')) if _LEN['on'] else None
+            if ap and ap[3]:
+                ap = None   # 발동 시점을 정확히 못 읽으면 묻지 않음
             mt = manual_trigger(ln, d) if _LEN['on'] and not ap else None
             if ap:
                 tr = (ap[0], ap[1], ap[2], {'approx': m.group('t')} if ap[3] else None)
@@ -2661,10 +2674,7 @@ def _parse_body2(ln, d, skill):
         if mcnd:
             cc = parse_cond(mcnd.group('c'))
             if cc is None:
-                if not _LEN['on']:
-                    return None
-                pre_ask = mcnd.group('c')
-                cc = []
+                return None
             tc = tc + cc
             rest = rest[mcnd.end():]
         cost = None
@@ -2690,8 +2700,6 @@ def _parse_body2(ln, d, skill):
                 cc = parse_cond(mc2.group('c'))
                 if cc is not None:
                     steps = [{'op': 'if', 'c': cc, 'then': [{'op': 'choose'}]}]
-                elif _LEN['on']:
-                    steps = [{'op': 'askIf', 'jp': mc2.group('c'), 'then': [{'op': 'choose'}]}]
                 else:
                     steps = None
             else:
@@ -2701,11 +2709,6 @@ def _parse_body2(ln, d, skill):
             steps = parse_effects(rest)
         if steps is None:
             return None
-        if pre_ask:
-            steps = [{'op': 'askIf', 'jp': pre_ask, 'then': steps}]
-        if extra and extra.get('approx'):
-            steps = [{'op': 'askIf', 'jp': extra['approx'], 'trig': 1, 'then': steps}]
-            extra = None
         r = {'k': 'auto', 'on': on, 'src': src, 'if': conds + tc, 'do': steps}
         if extra and extra.get('any'):
             r['any'] = 1

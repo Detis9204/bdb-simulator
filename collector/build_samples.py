@@ -149,6 +149,9 @@ def export_db(cards):
         else:
             base.append(cid)
         defs[str(cid)] = d
+    asks = [k for k, d in defs.items() if '"askIf"' in json.dumps(d.get('ab', []))]
+    if asks:   # 조건 충족을 플레이어에게 묻는 단계는 만들지 않음
+        raise SystemExit(f'조건 충족을 묻는 단계가 생성됨 (해석기 수정 필요): {asks[:20]}')
     out = ROOT / 'simulator' / 'cards_db.json'
     out.write_text(json.dumps({'v': 1, 'collabs': collabs, 'base': base, 'defs': defs}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     print(f'전체 카드 {len(defs)}장 (기본 {len(base)}종) -> {out.name} {out.stat().st_size // 1024}KB')
@@ -183,6 +186,10 @@ def main():
     html2 = re.sub(r'/\*GEN-SAMPLES-START\*/.*?/\*GEN-SAMPLES-END\*/', lambda m: block, html, flags=re.S)
     assert html2 != html or block in html, '표시(GEN-SAMPLES) 위치를 찾지 못했습니다'
     HTML.write_text(html2, encoding='utf-8')
+    # 조건 충족을 플레이어에게 묻는 단계는 만들지 않음: 생기면 데이터 생성 실패
+    asks = [k for k, d in defs.items() if '"askIf"' in json.dumps(d.get('ab', []))]
+    if asks:
+        raise SystemExit(f'조건 충족을 묻는 단계가 생성됨 (해석기 수정 필요): {asks[:20]}')
     manual = sum(1 for d in defs.values() if d.get('manual'))
     print(f'덱 {len(out)}개, 카드 {len(defs)}종 (텍스트 능력 수동 {manual}종), {len(block) // 1024}KB')
 
