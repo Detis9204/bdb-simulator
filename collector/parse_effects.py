@@ -623,6 +623,9 @@ def _zdesc(d):
     return noun_filter(f, noun.group(1) if noun else '')
 
 
+_ORCOND = {}
+
+
 def parse_cond(t):
     """'あなたのライフがレッドゾーン' 같은 조건문 (なら/中/で 앞부분) -> dict | None"""
     t = t.strip('、')
@@ -637,10 +640,17 @@ def parse_cond(t):
     t = re.sub(r'(?<=に)いて、', 'いるかつ', t)
     t = re.sub(r'着ていて', '着ているかつこのユニットが', t)
     t = re.sub(r'クラスカードが(\d+)枚以上ついたこのユニットがレストしている', r'このユニットにつけたクラスカードが\1枚以上かつこのユニットがレストしている', t)
+    if t == '__ORCOND__' and _ORCOND.get('c'):
+        return list(_ORCOND['c'])
+    t = t.replace('「エースか「', '「エース」か「')
+    mm = re.search(r'(?:かつ|、)(?=あなたの、)', t)
+    if mm and mm.start() > 0:   # 「このユニットがレストしていて、あなたの、テリトリー開放中で…」: 앞뒤를 따로 읽어 합침
+        a_, b_ = parse_cond(t[:mm.start()]), parse_cond(t[mm.end():])
+        return None if a_ is None or b_ is None else a_ + b_
     t = re.sub(r'^あなたの、(称号「[^」]+」か(?:称号)?「[^」]+」のテリトリー開放中)', r'あなたの\1', t)
     if t.startswith('あなたの、') and not re.match(r'あなたの、称号「[^」]+」か', t):   # 「あなたの、手札が1枚以下でテリトリー開放中」
-        xs = re.split(r'で(?=テリトリー|ライフ|手札|ドロップ|エナジー|称号|リムーブ|フィールド)|(?<=がい)て(?=テリトリー)', t[5:])
-        xs = [x + 'る' if x.endswith('がい') else x for x in xs]
+        xs = re.split(r'で(?=テリトリー|ライフ|手札|ドロップ|エナジー|称号|リムーブ|フィールド|コスト\d)|(?<=がい)て、?(?=テリトリー|あなた)|(?<=てい)て(?=テリトリー)', t[5:])
+        xs = [x + 'る' if x.endswith('がい') or x.endswith('てい') else x for x in xs]
         t = 'かつ'.join('あなたの' + x if not x.startswith(('あなた', '相手')) else x for x in xs)
     t = re.sub(r'が開放されていて、', 'が開放されているかつ', t)
     t = re.sub(r'引いていた$', '引いている', t)
@@ -648,6 +658,35 @@ def parse_cond(t):
     _LAST.setdefault('cond', None)
     C = [
         (r'このターン(?:に)?あなたがコマンドをプレイしてい(?:る|た)', lambda m: {'cmdTurn': 1}),
+        # 수치 비교 (대상·공개/드롭한 카드·배틀 상대·에너지 장수)
+        (r'対象のコストが公開したカードのコスト(?P<o>以下|以上)', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'le' if m.group('o') == '以下' else 'ge', 'b': {'k': 'milled', 'what': 'cost', 'agg': 'last'}}}),
+        (r'対象がバトル相手(?:のユニット)?と同じコスト', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'eq', 'b': {'k': 'vs', 'what': 'cost'}}}),
+        (r'それらのコストの合計が、?対象のコストの合計(?P<o>以上|以下)', lambda m: {'cmp': {'a': {'k': 'milled', 'what': 'cost', 'agg': 'sum'}, 'op': 'ge' if m.group('o') == '以上' else 'le', 'b': {'k': 'T', 'what': 'cost', 'agg': 'sum'}}}),
+        (r'そのカードのコストが(?P<n>\d+)(?P<o>以上|以下)', lambda m: {'cmp': {'a': {'k': 'milled', 'what': 'cost', 'agg': 'last'}, 'op': 'ge' if m.group('o') == '以上' else 'le', 'b': {'k': 'const', 'n': int(m.group('n'))}}}),
+        (r'対象がドロップしたカード以下のコスト', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'le', 'b': {'k': 'milled', 'what': 'cost', 'agg': 'last'}}}),
+        (r'対象のコストがドロップしたカードのコストの合計(?P<o>以下|以上)', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'cost'}, 'op': 'le' if m.group('o') == '以下' else 'ge', 'b': {'k': 'milled', 'what': 'cost', 'agg': 'sum'}}}),
+        (r'対象の(?P<w>パワー|コスト)の合計が(?P<n>\d+)(?P<o>以下|以上)', lambda m: {'cmp': {'a': {'k': 'T', 'what': 'power' if m.group('w') == 'パワー' else 'cost', 'agg': 'sum'}, 'op': 'le' if m.group('o') == '以下' else 'ge', 'b': {'k': 'const', 'n': int(m.group('n'))}}}),
+        (r'相手のエナジーの枚数が対象のコスト(?P<o>以上|以下)', lambda m: {'cmp': {'a': {'k': 'oppEnergy'}, 'op': 'ge' if m.group('o') == '以上' else 'le', 'b': {'k': 'T', 'what': 'cost'}}}),
+        (r'対象のコストより、?相手のエナジーの枚数が少ない', lambda m: {'cmp': {'a': {'k': 'oppEnergy'}, 'op': 'lt', 'b': {'k': 'T', 'what': 'cost'}}}),
+        (r'対象のコスト差が1で共通の属性を持つ', lambda m: {'tPairDiff1Attr': 1}),
+        (r'対象と共通の色を持つ、?相手のエナジーが(?P<n>\d+)枚以下', lambda m: {'oppEnergyTColorLE': int(m.group('n'))}),
+        (r'それが対象と共通の色を持っていない', lambda m: {'milledColorNotT': 1}),
+        (r'(?:ドロップしたカード|それら)が持つ称号が合計(?P<n>\d+)種類以上', lambda m: {'milledTitlesGE': int(m.group('n'))}),
+        (r'あなたのドロップしたユニットのパワーがバトル相手のパワー以上だった', lambda m: {'evPowGEvs': 1}),
+        (r'公開したログの総コストが合計(?P<n>\d+)以上', lambda m: {'logCostGE': int(m.group('n'))}),
+        (r'【(?P<k>[^】]+)】以外をドロップした', lambda m: {'milledNot': {'kwText': m.group('k')}}),
+        (r'コスト(?P<n>\d+)(?P<o>以上|以下)', lambda m: {'milled': {'costGE' if m.group('o') == '以上' else 'costLE': int(m.group('n'))}}),
+        (r'このユニットかバトル相手が(?P<c>赤|青|白|黒)', lambda m: {'selfOrVsColor': {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')]}),
+        (r'対象がこのターン(?:に)?効果でスタンドしていない', lambda m: {'tEffStoodNot': 1}),
+        (r'しない', lambda m: {'did': 0}),
+        # 여러 조건 묶음
+        (r'あなたの(?P<z>ドロップゾーン|リムーブゾーン)に(?P<l>(?:⁅(?:スペード|ハート|ダイヤ|クラブ)⁆、?)+)がそれぞれ別に(?P<n>\d+)枚以上ある', lambda m: {'attrsEachN': {'zone': 'drop' if m.group('z') == 'ドロップゾーン' else 'remove', 'attrs': re.findall(r'スペード|ハート|ダイヤ|クラブ', m.group('l')), 'n': int(m.group('n'))}}),
+        (r'あなたのドロップゾーンにコスト(?P<a>\d+)[~～](?P<b>\d+)のカードがそれぞれある', lambda m: {'costsEach': list(range(int(m.group('a')), int(m.group('b')) + 1))}),
+        (r'あなたの(?P<o>他の)?、?(?P<l>(?:(?:ハート|スペード|ダイヤ|クラブ)と?)+)のユニットがそれぞれ別に1枚以上いる', lambda m: {'existsEach': [{'attr': [a], 'type': 'unit', 'side': 'own', **({'notSelf': 1} if m.group('o') else {})} for a in re.findall('ハート|スペード|ダイヤ|クラブ', m.group('l'))]}),
+        (r'あなたの(?P<a>[^、。]+?)を含むエナジーと(?P<b>[^、。]+?)を含むエナジーがそれぞれ別に1枚以上ある', lambda m: {'all': [{'zc': {'side': 'own', 'zone': 'エナジー', 'f': {'name': m.group(x).strip('「」')}, 'n': 1, 'cmp': 'ge'}} for x in ('a', 'b')]}),
+        (r'あなたの、?(?P<a>[^、。]+?)ユニットか(?P<b>[^、。]+?)ユニットがいる', lambda m: (lambda fa, fb: fa is not None and fb is not None and {'any': [{'exists': dict(fa, side='own', type='unit')}, {'exists': dict(fb, side='own', type='unit')}]})(parse_desc(m.group('a')), parse_desc(m.group('b')))),
+        (r'あなたの(?P<d>[^、。]+?)がいない', lambda m: (lambda f: f is not None and {'none': dict(f, side='own', type='unit')})(_zdesc(m.group('d')))),
+        (r'あなたの(?P<d>「[^」]+」)がリムーブされている', lambda m: {'zc': {'side': 'own', 'zone': 'リムーブゾーン', 'f': {'name': m.group('d').strip('「」')}, 'n': 1, 'cmp': 'ge'}}),
         # 이번 판 기록으로 판단하는 조건
         (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)のライフから(?P<d>[^、。]*?)が(?:ドロップされ|ドロップし|出)てい(?:る|た)', lambda m: _histc(m, {'k': 'dmg'})),
         (r'(?P<sc>このターン(?:に)?|このゲーム中(?:に)?)(?P<w>あなた|相手)の(?P<d>[^、。]*?)が(?P<z>ドロップゾーン|リムーブゾーン|エナジーゾーン|手札|ライフ(?:ゾーン)?)に置かれてい(?:る|た)',
@@ -682,7 +721,7 @@ def parse_cond(t):
         (r'バトル相手が⁅(?P<i>バスター|ショット)アイコン⁆', lambda m: {'vsF': {'icon': 'buster' if m.group('i') == 'バスター' else 'shot'}}),
         (r'相手のユニットの枚数があなたのユニットより(?P<n>\d+)枚以上多い', lambda m: {'oppMoreBy': int(m.group('n'))}),
         (r'(?:そのターン中、)?あなたの(?P<d>[^、。]*?)(?:ユニット)?がいる', lambda m: (lambda f: f is not None and {'exists': dict(f, side='own', type='unit')})(_zdesc(m.group('d')) if m.group('d') else {})),
-        (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットが(?P<n>\d+)枚以上', lambda m: (lambda f: f is not None and {'unitCountGE': {'f': dict(f, side='opp' if m.group('w') == '相手' else 'own', type='unit'), 'n': int(m.group('n'))}})(parse_desc(m.group('d')))),
+        (r'(?P<w>あなた|相手)の(?P<d>[^、。]+?)ユニットが(?:合計)?(?P<n>\d+)枚以上', lambda m: (lambda f: f is not None and {'unitCountGE': {'f': dict(f, side='opp' if m.group('w') == '相手' else 'own', type='unit'), 'n': int(m.group('n'))}})(parse_desc(m.group('d')))),
         (r'あなたの、?このユニットと共通の称号を持つテリトリー開放中', lambda m: {'hold': 1}),
         (r'これが手札からプレイされた', lambda m: {'fromHand': 1}),
         (r'対象が(?P<k>スタンド|レスト)している', lambda m: {'tRested': 1 if m.group('k') == 'レスト' else 0}),
@@ -733,7 +772,7 @@ def parse_cond(t):
         (r'山札から(?P<d>[^、。]*?)をドロップした?', lambda m: {'milled': parse_desc(m.group('d').replace('バスターアイコン', 'バスターの'))}),
         (r'(?:ドロップ|それ)しない|そうしない', lambda m: {'did': 0}),
         (r'あなたのドロップゾーンの(?P<d>[^、。]*?)(?:ユニットカード|カード)?が(?P<n>\d+)枚以上', 'count'),
-        (r'(?:さらに)?(?P<n>\d+)枚(?:以上|以下)?', 'again'),
+        (r'(?:さらに)?(?P<n>\d+)(?:枚|種類)(?:以上|以下)?', 'again'),
         (r'相手のライフがレッドゾーン', lambda m: {'oppRed': 1}),
         (r'あなたのテリトリー(?:が開放されている|開放中)', lambda m: {'terr': 1}),
         (r'あなたの称号「(?P<t>[^」]+)」のテリトリー(?:が開放されている|開放中)', lambda m: {'terrTitle': m.group('t')}),
@@ -777,7 +816,7 @@ def parse_cond(t):
         (r'あなたの伏せたカードが(?:ない|無い)', lambda m: {'setCount': 0}),
         (r'あなたの伏せたカードがある', lambda m: {'setHas': 1}),
         (r'(?:ドロップした|それらの)カードのコストの合計が(?P<n>\d+)以上', lambda m: {'milledCostGE': int(m.group('n'))}),
-        (r'(?P<d>[^、。]+?)を(?:手札から)?ドロップした', lambda m: (lambda f: f is not None and {'milled': f})(parse_desc(m.group('d').replace('ユニットカード', 'ユニット') + 'の') if not m.group('d').endswith('カード') else noun_filter(parse_desc(re.sub(r'(ユニット|コマンド)?カード$', '', m.group('d'))) or {}, re.search(r'(ユニットカード|コマンドカード|カード)$', m.group('d')).group(1)))),
+        (r'(?P<d>(?:カード名に、)?[^、。]+?)を(?:手札から)?ドロップした', lambda m: (lambda f: f is not None and {'milled': f})(parse_desc(m.group('d').replace('ユニットカード', 'ユニット') + 'の') if not m.group('d').endswith('カード') else noun_filter(parse_desc(re.sub(r'(ユニット|コマンド)?カード$', '', m.group('d'))) or {}, re.search(r'(ユニットカード|コマンドカード|カード)$', m.group('d')).group(1)))),
         (r'このユニットが【(?P<n>[^】]+)】を着ている', lambda m: {'wearing': m.group('n').split('/')}),
         (r'このターン(?:に)?あなたがダメージを受けている', lambda m: {'meDmgTurn': 1}),
         (r'あなたの山札が(?P<n>\d+)枚以下', lambda m: {'deckLE': int(m.group('n'))}),
@@ -1099,7 +1138,7 @@ def _infer_acts(frag):
     return acts
 
 
-_CONDMARK = re.compile(r'(?:^|、)(?:(?P<c>(?:[^、。]*?いて、)?[^、。]*?)(?:なら(?![なずば])|(?<!そうし)(?<=[しいっけえきせ])たら)、?|(?P<did>そうしたら)、)')
+_CONDMARK = re.compile(r'(?:^|、)(?:(?P<c>(?:(?:あなたの|相手の)、)?(?:[^、。]*?いて、)?(?:[^、。]*?(?:⁅[^⁆]+⁆、)+)?[^、。]*?)(?:なら(?![なずば])|(?<!そうし)(?<=[しいっけえきせ])たら)、?|(?P<did>そうしたら)、)')
 
 
 def _cond_split(seg):
@@ -1362,17 +1401,63 @@ TRIGGERS = [
 ]
 
 
+_EXACT_TRIG = [
+    (r'あなたのバトル中のユニットがフィールドからドロップした時', 'leave', 'own', [{'evInBattle': 1}]),
+    (r'このユニットがバトルでドロップした時', 'leave', 'self', [{'evInBattle': 1}]),
+    (r'このユニットが(?:エースか⁅(?:バスターアイコン|B)⁆|エースか⁅B⁆の)(?:の)?(?:ユニット)?とバトルする時', 'battle', 'self', [{'vsF': {'aceOrBuster': 1}}]),
+    (r'あなたの【ブライト】を持つユニットがアタックしてバトルに勝利した時', 'win', 'own', [{'evF': {'bright': 1}}]),
+    (r'あなたの称号「(?P<t>[^」]+)」のエースがアタックしてバトルに勝利した時', 'win', 'own', 'T_ACE'),
+    (r'あなたの他のユニットがバトルする時', 'battle', 'own', [{'evNotSelf': 1}]),
+    (r'クラスカードのついたこのユニットがフィールドからドロップした時', 'leave', 'self', [{'selfHadClass': 1}]),
+    (r'(?:クラスカードがついた)このユニット(?:のアタック時|がアタックした時)', 'attack', 'self', [{'selfHasClass': 1}]),
+    (r'あなたのエースがアタックしたターンのエンドフェイズ開始時', 'endStart', 'me', [{'hist': {'scope': 'turn', 'k': 'atk', 'side': 'own', 'f': {'ace': 1}}}]),
+    (r'あなたのエンドフェイズ開始時', 'endStart', 'me', []),
+    (r'このユニットがドロップゾーンから登場した時', 'enter', 'self', [{'fromZone': 'drop'}]),
+    (r'このユニットが手札以外から登場した時', 'enter', 'self', [{'fromZone': 'notHand'}]),
+    (r'このユニットがアタックしてバトルする時', 'battle', 'self', [{'selfAttacking': 1}]),
+    (r'このユニットが【(?P<a>[^】]+)】か【(?P<b>[^】]+)】を持つユニットとバトルする時', 'battle', 'self', 'VS_KW2'),
+    (r'このユニットが⁅?(?P<at>スペード|ハート|ダイヤ|クラブ)⁆?とバトルする時', 'battle', 'self', 'VS_ATTR'),
+    (r'このユニットの【ブライト】で(?P<d>[^、。]+?)をドロップした時', 'bright', 'self', 'BRIGHT_F'),
+]
+
+
+def _exact_trigger(h):
+    """조건이 붙은 발동 시점을 정확한 조건으로 (가능하면)"""
+    for rx, on, src, cs in _EXACT_TRIG:
+        m = re.fullmatch(rx, h)
+        if not m:
+            continue
+        if cs == 'T_ACE':
+            cs = [{'evF': {'title': m.group('t'), 'ace': 1}}]
+        elif cs == 'VS_KW2':
+            KM = {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}
+            fs = [({'bright': 1} if k == 'ブライト' else {'kw': KM[k]} if k in KM else {'kwText': k}) for k in (m.group('a'), m.group('b'))]
+            cs = [{'vsAny': fs}]
+        elif cs == 'VS_ATTR':
+            cs = [{'vsF': {'attr': [m.group('at')]}}]
+        elif cs == 'BRIGHT_F':
+            f = _zdesc(m.group('d'))
+            if f is None:
+                return None
+            cs = [{'brightDropF': f}]
+        return on, src, list(cs)
+    return None
+
+
 def _approx_trigger(h):
     """정확히 못 읽은 발동 시점 -> 가장 가까운 시점 (on, src, conds) — 실제로 해당하는지는 그때 플레이어에게 물음"""
     conds = []
     h = re.sub(r'」テリトリー', '」のテリトリー', h)
-    m = re.match(r'あなたの(?:称号「(?P<ti>[^」]+)」の)?テリトリー(?:が開放されていて|開放中で|が開放中で|開放中に|が開放中に|開放中)、?', h)
+    m = re.match(r'あなたの(?:称号「(?P<ti>[^」]+)」の)?テリトリー(?:が開放されていて|開放中で|が開放中で|開放中に|が開放中に|開放中の|開放中)、?', h)
     if m:
         conds.append({'terrTitle': m.group('ti')} if m.group('ti') else {'terr': 1})
         h = h[m.end():]
         tr = parse_trigger(h)
         if tr:
             return tr[0], tr[1], conds + tr[2], False
+    ex = _exact_trigger(h)
+    if ex:
+        return ex[0], ex[1], conds + ex[2], False
     side = 'self' if re.search(r'このユニット|このカード', h) else 'own' if h.startswith('あなた') else 'opp' if h.startswith('相手') else None
     who = 'opp' if h.startswith('相手') else 'me'
     fam = None
@@ -1867,6 +1952,24 @@ def parse_card(d):
             continue
         # 「以下を1つ行う」 + ・줄들
         ln = re.sub(r'(行う。)\([^)]*\)$', r'\1', ln)
+        # 「以下を1つでも満たすなら、~」 + ・조건 줄들
+        mor = re.fullmatch(r'(?P<h>.*?)以下を1つでも満たすなら、(?P<a>.+)', ln)
+        if mor and i + 1 < len(lines) and lines[i + 1].startswith('・'):
+            j = i + 1
+            cs = []
+            while j < len(lines) and lines[j].startswith('・'):
+                cs.append(parse_cond(lines[j][1:].rstrip('。')))
+                j += 1
+            if all(c is not None for c in cs):
+                _ORCOND['c'] = [{'any': [{'all': c} if len(c) > 1 else c[0] for c in cs]}]
+                r = parse_body(mor.group('h') + '__ORCOND__なら、' + mor.group('a'), d, skill)
+                _ORCOND.clear()
+                if r:
+                    r['li'] = list(range(i, j))
+                    abs_.append(r)
+                    done.update(range(i, j))
+            i = j
+            continue
         # 「以下をN回(まで)行う(てよい)」
         mrp = re.fullmatch(r'(?P<h>.*?)以下を(?P<n>\d+)回(?P<upto>まで)?行(?:う|ってよい)。?', ln)
         if mrp and i + 1 < len(lines) and lines[i + 1].startswith('・'):
