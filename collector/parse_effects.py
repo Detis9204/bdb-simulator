@@ -106,6 +106,7 @@ _DESC_TOKENS.insert(0, (r'【(?!ブライト)([^】]+)】を持たない、?', l
 _DESC_TOKENS.append((r'(黒|白|青|赤)でない、?', lambda m, f: f.__setitem__('colorNot', {'黒': 'black', '白': 'white', '青': 'blue', '赤': 'red'}[m.group(1)])))
 _DESC_TOKENS.append((r'(?:総)?コスト(\d+)で、?(?!ない)', lambda m, f: f.__setitem__('costEQ', int(m.group(1)))))
 _DESC_TOKENS.insert(0, (r'「([^」]+)」でない、?', lambda m, f: f.__setitem__('nameNot', m.group(1))))
+_DESC_TOKENS.insert(0, (r'あなたのユニットと共通の色を持たない', lambda m, f: f.__setitem__('colorNotField', 1)))
 _DESC_TOKENS.append((r'ユニットカードで、?', lambda m, f: f.__setitem__('type', 'unit')))
 _DESC_TOKENS.append((r'コマンドカードで、?', lambda m, f: f.__setitem__('type', 'command')))
 _DESC_TOKENS.append((r'表の?', lambda m, f: f.__setitem__('faceUp', 1)))
@@ -927,7 +928,7 @@ def eff_patterns():
     add(r'あなたは自身のユニットで最もパワーの低いユニットから1枚選' + V('ぶ', 'び') + END, lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMin': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}])
     add(r'あなたの(?:自身の)?ユニットで最もパワーの低いユニットから1枚選' + V('ぶ', 'び') + END, lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMin': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}])
     add(r'各プレイヤーの選ばれなかったユニット全てを手札に戻' + V('す', 'し') + END, lambda m: {'op': 'noop'})
-    add(r'次の相手ターンまで、各プレイヤーは以下の規則を厳守す' + V('る', '') + END, lambda m: {'op': 'restrict', 'r': {'kind': 'secondUnitDrop', 'who': 'both', 'dur': 'nextOpp'}})
+    add(r'次の相手ターンまで、各プレイヤーは以下の規則を厳守す' + V('る', '') + r'(?:。・[^。]+。?)?' + END, lambda m: {'op': 'restrict', 'r': {'kind': 'secondUnitDrop', 'who': 'both', 'dur': 'nextOpp'}})
     add(r'(?:そのターン中、)?あなたのユニットが次に【スキル】を発動する際、そのスキルコスト全てを払わずに発動でき' + V('る', '') + END, lambda m: {'op': 'turnFlag', 'flag': 'freeSkill'})
     add(r'相手は自身のドロップゾーンを(?P<n>\d+)枚リムーブ' + V('する', 'し') + END, lambda m: {'op': 'oppDropRemove', 'n': int(m.group('n'))})
     add(r'あなたの山札を上から1枚、表で契約書としてこのテリトリーにつけ' + V('る', '') + MAY + END, lambda m: {'op': 'contract', 'n': 1, 'may': 1})
@@ -965,6 +966,11 @@ def eff_patterns():
         lambda m: (lambda c: c is not None and {'op': '$altEvt', 'c': c, 'n': int(m.group('n'))})(parse_cond(m.group('c'))))
     add(r'(?:あなたの)?手札からこのカードを登場させ' + V('る', '') + END, lambda m: {'op': 'summon', 'to': 'card'})
     add(r'(?:そのターン中、)?このユニットは他の能力を全て失' + V('う', 'い') + END, lambda m: {'op': 'kw', 'kw': 'blank', 'to': 'self'})
+    add(r'次のエンドフェイズ開始時、そのユニットをスタンド' + V('する', 'し') + END, lambda m: {'op': 'delay', 'at': 'endStart', 'do': [{'op': 'stand', 'to': 'evt'}]})
+    add(r'対象のコスト(?P<k>\d+)につき、あなたのエナジーを(?P<n>\d+)枚スタンド' + V('する', 'し') + END, lambda m: {'op': 'standEnergy', 'n': int(m.group('n')), 'per': {'tCost': 1, 'k': int(m.group('k'))}})
+    add(r'あなたの伏せたカードの中から、(?P<d>[^。]+?)を(?P<n>\d+)枚(?P<up>まで)?登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'set', 'to': 'field', 'f': f, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0})(_zdesc(m.group('d'))))
+    add(r'あなたのユニットがアタックしたターンのエンドフェイズ開始時、(?P<x>[^。]+)' + END, lambda m: None)
     MV = {'手札に戻': 'bounce', '山札の下に置': 'deckBottom', '山札の上に置': 'deckTop', 'ライフの先頭に置': 'life', 'エナジーゾーンに置': 'energy', 'ドロップさせ': 'drop', 'リムーブ': 'remove'}
     LB = {'bounce': '패로 되돌림', 'deckBottom': '덱 맨 아래', 'deckTop': '덱 맨 위', 'life': '라이프 맨 앞', 'energy': '에너지 존', 'drop': '드롭', 'remove': '리무브'}
     def or_move(m):
@@ -2369,6 +2375,11 @@ def parse_trigger(t):
     mx = re.fullmatch(r'(?P<o>相手のターンに)?このカードを手札からドロップした時', t)
     if mx:
         return 'discarded', 'self', conds + ([{'oppTurn': 1}] if mx.group('o') else []), None
+    mx = re.fullmatch(r'あなたの(?P<d>[^、。]+?)がバトルでドロップした時', t)
+    if mx and _zdesc(mx.group('d')) is not None:
+        return 'leave', 'own', conds + [{'evF': _zdesc(mx.group('d'))}, {'evInBattle': 1}], None
+    if t == 'あなたのユニットがアタックしたターンのエンドフェイズ開始時':
+        return 'endStart', 'me', conds + [{'attackedTurn': 1}], None
     if t == 'あなたのカードがドロップした時':
         return 'anyDrop', 'me', conds, None
     mx = re.fullmatch(r'あなたの(?P<d>[^、。]+?)ユニットのアタック終了時', t)
@@ -2847,6 +2858,19 @@ def parse_card(d):
     else:
         lines = list(d.get('text') or [])
     lines = [N(x) for x in lines]
+    lines = [re.sub(r'(【怪異:[^】⁆]+)⁆/自動⁆', r'\1】⁅自動⁆', x) for x in lines]
+    tmerge = []
+    if d.get('type') == 'territory':   # 테리토리 효과가 ' / '로 잘린 이어지는 문장
+        merged = []
+        for x in lines:
+            if merged and not re.match(r'[⁅【・(「]|このカードは', x) and re.match(r'(?:次の|その|そうしたら|さらに)', x):
+                k0 = max(i0 for i0, y in enumerate(merged) if y)
+                merged[k0] = merged[k0] + x
+                tmerge.append((len(merged), k0))
+                merged.append('')
+            else:
+                merged.append(x)
+        lines = merged
     # 원문 줄이 문장 중간에서 끊긴 경우 이어 붙임 (줄 번호는 첫 줄)
     joined = {}
     k = 0
@@ -3430,6 +3454,38 @@ def parse_card(d):
             d['toTerrOnLeave'] = 1; done.add(i); i += 1; continue
         if re.fullmatch(r'⁅永続⁆あなたのテリトリーが無いなら、テリトリーゾーンからこのカードをプレイできる。?(?:\(.*\))?', ln):
             d['playFromTerr'] = 1; done.add(i); i += 1; continue
+        if re.fullmatch(r'・アイコン能力.*', ln):
+            done.add(i); i += 1; continue
+        m = re.fullmatch(r'⁅永続⁆あなたのドロップゾーンから[【⁅]ログ[】⁆]を持つカードが手札に戻る際、代わりにそのカードを登場させてよい。?', ln)
+        if m:
+            abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'rule', 'rule': 'logReturnSummon'}], 'li': [i]}); done.add(i); i += 1; continue
+        m = re.fullmatch(r'⁅永(?:続)?⁆各ターン1回まで、あなたはコマンドカードを『あなたの⁅神衣⁆を持つユニット1枚をレストする』でもプレイできる。?', ln)
+        if m:
+            d.setdefault('terrAlt', []).append({'kind': 'restU', 'units': [{'kamui': 1, 'type': 'unit'}], 'once': 1, 'onceKey': 'tA' + str(d.get('id', d.get('jp', ''))), 'f': {'type': 'command'}, 'fText': '神衣'})
+            done.add(i); i += 1; continue
+        m = re.fullmatch(r'⁅永続⁆各ターン1回まで、あなたがカードをプレイする際、コストを(?P<n>\d+)減らしてプレイでき、あなたのエナジーが4色あるなら、さらに1減らしてプレイできる。ただしコストは1より下にならない。?', ln)
+        if m:
+            key = 'tR' + str(d.get('id', d.get('jp', '')))
+            for nn in range(1, int(m.group('n')) + 1):   # 공식 Q&A: 덜 줄이는 것도 가능
+                d.setdefault('terrAlt', []).append({'kind': 'costRed', 'n': nn, 'once': 1, 'onceKey': key})
+            d['terrAlt'].append({'kind': 'costRed', 'n': int(m.group('n')) + 1, 'need4': 1, 'once': 1, 'onceKey': key})
+            done.add(i); i += 1; continue
+        if re.fullmatch(r'⁅永続⁆あなたは『ドロップゾーンから指定属性のカードをリムーブする』でも【ブライト】できる。?', ln):
+            abs_.append({'k': 'perm', 'if': [], 'do': [{'op': 'rule', 'rule': 'brightFromDrop'}], 'li': [i]}); done.add(i); i += 1; continue
+        if re.fullmatch(r'⁅永続⁆あなたのターン中、あなたは『あなたの手札のコマンドカードを1枚ドロップする。?』でもスキルコストを払える。?', ln):
+            abs_.append({'k': 'perm', 'if': [{'myTurn': 1}], 'do': [{'op': 'rule', 'rule': 'skillAltCmd'}], 'li': [i]}); done.add(i); i += 1; continue
+        m = re.fullmatch(r'このカードは、(?P<l>称号「[^」]+」(?:、「[^」]+」)+)を持つ。?(?:\(.*\))?', ln)
+        if m:
+            d['titles'] = list(dict.fromkeys((d.get('titles') or []) + re.findall(r'「([^」]+)」', m.group('l'))))
+            done.add(i); i += 1; continue
+        m = re.fullmatch(r'⁅自動⁆このテリトリーが開放された時とあなたのユニットがこのターン初めて登場した時、(?P<x>.+)', ln)
+        if m:
+            body = parse_effects(m.group('x'))
+            if body:
+                abs_.append({'k': 'auto', 'on': 'terrOpen', 'src': 'me', 'if': [], 'do': body, 'li': [i]})
+                abs_.append({'k': 'auto', 'on': 'enter', 'src': 'own', 'if': [{'firstEnterTurn': 1}], 'do': copy.deepcopy(body), 'li': [i]})
+                done.add(i)
+            i += 1; continue
         m = re.fullmatch(r'(?P<c>[^。]+?)なら、このカードはドロップゾーンからプレイできる。?', ln)
         if m and parse_cond(m.group('c')) is not None:
             d['playFromDrop'] = parse_cond(m.group('c'))
@@ -3554,6 +3610,17 @@ def parse_card(d):
         d['mt'] = mts
     elif 'mt' in d:
         del d['mt']
+    for j0, k0 in tmerge:
+        if k0 in done:
+            done.add(j0)
+            for a in abs_:
+                if k0 in a.get('li', []):
+                    a['li'] = sorted(set(a['li']) | {j0})
+    for i0, x in enumerate(lines):
+        if i0 in done and x.rstrip('。').endswith('以下の規則を厳守する'):
+            j0 = i0 + 1
+            while j0 < len(lines) and lines[j0].startswith('・'):
+                done.add(j0); j0 += 1
     for a in abs_:
         if a.get('k') != 'auto':
             continue
