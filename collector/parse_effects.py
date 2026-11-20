@@ -3629,7 +3629,33 @@ def parse_card(d):
             a['fromHand'] = 1; d['handTrig'] = 1
         if 'エナジーのこのカード' in txt and a.get('on') not in ('skillDrop',) and a.get('src') != 'self':
             a['fromEnergy'] = 1; d['energyTrig'] = 1
+    for a in abs_:
+        _fix_summoned(a.get('do') or [])
     return abs_, done
+
+
+def _is_summon(o):
+    if not isinstance(o, dict):
+        return False
+    op = o.get('op', '')
+    return (op in ('pick', 'look') and o.get('to') == 'field') or op.startswith('summon')
+
+
+def _fix_summoned(seq, st=None):
+    """登場させ…そのユニット: 대상을 고른 적 없이 등장시킨 뒤의 'T'는 등장시킨 유닛"""
+    st = st or {'tgt': False, 'sum': False}
+    for o in seq:
+        if not isinstance(o, dict):
+            continue
+        if o.get('op') == 'tgt' or o.get('into') == 'T':
+            st['tgt'] = True
+        if st['sum'] and not st['tgt'] and o.get('to') == 'T' and o.get('op') not in ('tgt', 'pick', 'look'):
+            o['to'] = 'summoned'
+        for k in ('then', 'else', 'do'):
+            if isinstance(o.get(k), list):
+                _fix_summoned(o[k], dict(st) if k != 'do' or o.get('op') in ('if',) else {'tgt': False, 'sum': False})
+        if _is_summon(o):
+            st['sum'] = True
 
 
 def _ko_ask(d, abs_):
