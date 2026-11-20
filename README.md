@@ -10,7 +10,7 @@
 `main`에 올리면 `.github/workflows/pages.yml`이 카드 이미지 묶음을 만들고 `simulator/`와 함께 Pages에 게시해요.
 
 1. 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 바꿔요 (처음 한 번).
-2. **Actions** 탭에서 `Pages` 작업이 끝나면 `https://detis9204.github.io/bdb-simulator/`에서 열려요.
+2. **Actions** 탭에서 `Pages` 작업이 끝나면 `https://bdb-simulator.github.io/`에서 열려요.
 3. 비공개 저장소의 Pages는 GitHub Pro 이상 요금제에서만 켤 수 있어요.
 
 claude.ai 밖에서는 온라인 대전이 PeerJS(브라우저끼리 직접 연결)로 동작해요. 로그인이나 초대 없이 같은 주소를 열고 방 코드만 알려 주면 돼요. 연결 중개는 PeerJS 공개 서버가 하고, 게임 데이터는 두 브라우저가 직접 주고받아요. 회사망처럼 방화벽이 엄격한 곳에서는 연결이 안 될 수 있어요.
