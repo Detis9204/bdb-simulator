@@ -949,7 +949,7 @@ const Engine = (() => {
     for (const f of alt.units) { const u = unitsOf(s, p).find(u => !u.rested && !used.includes(u) && unitMatches(s, u, f, p, null)); if (!u) return null; used.push(u); }
     return used;
   }
-  const dropPlayable = (s, p, c) => { const d = DEFS[c.id]; return !!d.playFromDrop && condsOk(s, { p, id: c.id, src: c.uid }, d.playFromDrop) && playAllowed(s, p, d) && canPay(s.players[p], d); };
+  const dropPlayable = (s, p, c) => { const d = DEFS[c.id]; return ((!!d.playFromDrop && condsOk(s, { p, id: c.id, src: c.uid }, d.playFromDrop)) || (s.turn.flags || {}).dropAsHand === p + 1) && d.type !== 'territory' && playAllowed(s, p, d) && canPay(s.players[p], d); };
   function altEnergy(P, alt) { return P.energy.filter(e => !e.rested && (alt.down ? e.down : !e.down) && (!alt.f || defMatches(DEFS[e.id], alt.f))); }
   function altOk(s, p, d, alt) {
     const P = s.players[p];
@@ -2639,8 +2639,10 @@ const Engine = (() => {
       requireMain(s);
       const P = s.players[s.active];
       if (P.energySet) fail('에너지는 한 턴에 한 번만 놓을 수 있습니다');
-      const i = P.hand.findIndex(c => c.uid === a.uid); if (i < 0) fail('패에 없는 카드입니다');
-      const [c] = P.hand.splice(i, 1);
+      const fromDrop = a.fromDrop && (s.turn.flags || {}).dropAsHand === s.active + 1;
+      const Zs = fromDrop ? P.drop : P.hand;
+      const i = Zs.findIndex(c => c.uid === a.uid); if (i < 0) fail(fromDrop ? '드롭 존에 없는 카드입니다' : '패에 없는 카드입니다');
+      const [c] = Zs.splice(i, 1);
       P.energy.push({ ...c, rested: false }); P.energySet = true;
       log(s, `${P.name}: ${name(c)}을(를) 에너지로 놓음`);
     },
@@ -3653,7 +3655,7 @@ function viewHTML() {
   else if (mode === 'group') {
     const g = new Map(); for (const c of cards) g.set(c.id, (g.get(c.id) || 0) + 1);
     body = `<div class="grid">${[...g].map(([id, n]) => `<div class="grp">${cardHTML(DEFS[id], { uid: cards.find(c => c.id === id).uid })}<span class="x">×${n}</span></div>`).join('')}</div>`;
-  } else body = `<div class="grid">${cards.map(c => `<div class="grp">${cardHTML(DEFS[c.id], { uid: c.uid, cls: (c.rested ? 'rested ' : '') + (c.down ? 'facedown' : '') })}${c.down ? '<span class="x">뒷면</span>' : ''}${zone === 'drop' && p === controller() && S.active === p && S.phase === 'main' && !S.pending && Engine.dropPlayable(S, p, c) ? `<button data-b="playDrop" data-u="${c.uid}">여기서 플레이</button>` : ''}</div>`).join('')}</div>`;
+  } else body = `<div class="grid">${cards.map(c => `<div class="grp">${cardHTML(DEFS[c.id], { uid: c.uid, cls: (c.rested ? 'rested ' : '') + (c.down ? 'facedown' : '') })}${c.down ? '<span class="x">뒷면</span>' : ''}${zone === 'drop' && p === controller() && S.active === p && S.phase === 'main' && !S.pending && Engine.dropPlayable(S, p, c) ? `<button data-b="playDrop" data-u="${c.uid}">여기서 플레이</button>` : ''}${zone === 'drop' && p === controller() && S.active === p && S.phase === 'main' && !S.pending && (S.turn.flags || {}).dropAsHand === p + 1 && !P.energySet ? `<button data-b="energyDrop" data-u="${c.uid}">에너지로 놓기</button>` : ''}</div>`).join('')}</div>`;
   return `<div class="modal" data-b="closeView"><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
     <header><h2>${esc(title)}</h2><span class="sub">${esc(sub)}</span>
       <div class="seg"><button class="${mode === 'list' ? 'on' : ''}" data-b="viewMode" data-m="list">한 장씩</button><button class="${mode === 'group' ? 'on' : ''}" data-b="viewMode" data-m="group">같은 카드 묶기</button></div>
@@ -3788,6 +3790,7 @@ function handleAction(e, onCard) {
       return dispatch({ type: 'SCOUT', top: order.filter(u => ui.scout[u] === 'top'), bottom: order.filter(u => ui.scout[u] === 'bottom') });
     }
     if (k === 'playAlt') return dispatch({ type: 'PLAY', uid: ui.sel, alt: +b.dataset.v });
+    if (k === 'energyDrop') { ui.view = null; return dispatch({ type: 'SET_ENERGY', uid: +b.dataset.u || b.dataset.u, fromDrop: 1 }); }
     if (k === 'playDrop') { ui.view = null; return dispatch({ type: 'PLAY', uid: +b.dataset.u || b.dataset.u, fromDrop: 1 }); }
     if (k === 'play') {
       const d = DEFS[S.players[S.active].hand.find(c => c.uid === ui.sel).id], need = Engine.needsTarget(d);
