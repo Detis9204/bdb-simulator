@@ -53,6 +53,8 @@ _DESC_TOKENS = [
     (r'である', lambda m, f: None),
     (r'(ハート|スペード|ダイヤ|クラブ)で', lambda m, f: f.__setitem__('attr', [m.group(1)])),
     (r'⁅?(バスター|ショット)アイコン⁆?(?:の)?(?=$)', lambda m, f: f.__setitem__('icon', 'buster' if m.group(1) == 'バスター' else 'shot')),
+    (r'【夢見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
+    (r'【(スカウト\d+|デコイ|ブリッツ|バーサーク)】のアイコン能力を持つ', lambda m, f: f.__setitem__('iconEff', {'デコイ': 'decoy', 'ブリッツ': 'blitz', 'バーサーク': 'berserk'}.get(m.group(1), m.group(1).replace('スカウト', 'scout')))),
     (r'【(?!ブライト)([^】]+)】を持つ', lambda m, f: f.__setitem__('kwText', m.group(1))),
     (r'(赤|青|白|黒)(?:で|の)(?!な)', lambda m, f: f.__setitem__('color', [{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)]])),
     (r'(赤|青|白|黒)でない、?', lambda m, f: f.__setitem__('notColor', {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group(1)])),
@@ -63,7 +65,7 @@ _DESC_TOKENS = [
     (r'【ブライト】を持つ', lambda m, f: f.__setitem__('bright', 1)),
     (r'【コスプレ】を持つ', lambda m, f: f.__setitem__('cos', 1)),
     (r'【我駆力】を持つ', lambda m, f: f.__setitem__('gaku', 1)),
-    (r'【夢を見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
+    (r'【夢を?見ない】を持つ', lambda m, f: f.__setitem__('yumemi', 1)),
     (r'⁅神衣⁆を持つ', lambda m, f: f.__setitem__('kamui', 1)),
     (r'【ブライト】を持たない', lambda m, f: f.__setitem__('noBright', 1)),
     (r'【(?!スキル|ブライト|コスプレ|デコイ|ブリッツ|バーサーク)([^】]+)】を持つ', lambda m, f: f.__setitem__('kwText', m.group(1))),
@@ -96,6 +98,13 @@ _DESC_TOKENS.append((r'(?:、)?(?P<a>(?:ハート|スペード|ダイヤ|クラ�
 
 
 _DESC_TOKENS.insert(0, (r'総?コスト(\d+)でない', lambda m, f: f.__setitem__('costNE', int(m.group(1)))))
+_DESC_TOKENS.insert(0, (r'((?:黒|白|青|赤)(?:か(?:黒|白|青|赤))+)(?:の|で、?)', lambda m, f: f.__setitem__('color', [{'黒': 'black', '白': 'white', '青': 'blue', '赤': 'red'}[c] for c in m.group(1).split('か')])))
+_DESC_TOKENS.insert(0, (r'総?コスト(\d+)ちょうどで、?', lambda m, f: f.__setitem__('costEQ', int(m.group(1)))))
+_DESC_TOKENS.insert(0, (r'パワー(\d+)かパワー(\d+)で、?', lambda m, f: f.__setitem__('powIn', [int(m.group(1)), int(m.group(2))])))
+_DESC_TOKENS.insert(0, (r'⁅(ハート|スペード|ダイヤ|クラブ)⁆を持たない、?', lambda m, f: f.__setitem__('attrNot', m.group(1))))
+_DESC_TOKENS.insert(0, (r'【(?!ブライト)([^】]+)】を持たない、?', lambda m, f: f.__setitem__('kwNot', m.group(1))))
+_DESC_TOKENS.append((r'(黒|白|青|赤)でない、?', lambda m, f: f.__setitem__('colorNot', {'黒': 'black', '白': 'white', '青': 'blue', '赤': 'red'}[m.group(1)])))
+_DESC_TOKENS.append((r'(?:総)?コスト(\d+)で、?(?!ない)', lambda m, f: f.__setitem__('costEQ', int(m.group(1)))))
 _DESC_TOKENS.append((r'ユニットカードで、?', lambda m, f: f.__setitem__('type', 'unit')))
 _DESC_TOKENS.append((r'コマンドカードで、?', lambda m, f: f.__setitem__('type', 'command')))
 _DESC_TOKENS.append((r'表の?', lambda m, f: f.__setitem__('faceUp', 1)))
@@ -133,6 +142,10 @@ def parse_desc(desc, f=None):
     # 「AかBの」: 둘 중 하나에 맞으면 (진영은 바깥으로)
     for i in _top_ka(desc):
         L, R = desc[:i], desc[i + 1:]
+        pre = {}
+        mp = re.match(r'(.*?で、)', L)
+        if mp and _parse_desc0(mp.group(1)) is not None:
+            pre = _parse_desc0(mp.group(1)); L = L[mp.end():]
         fl = _parse_desc0(L) or _parse_desc0(L + 'の') or (_zdesc0(L) if re.search(r'(?:エース|カード|ユニット)$', L) else None)
         fr = _parse_desc0(R) or _parse_desc0(re.sub(r'の$', '', R) + 'の') if R else None
         if fl and fr:
@@ -141,6 +154,9 @@ def parse_desc(desc, f=None):
             if side:
                 out['side'] = side
             out['or'] = [fl, fr]
+            out.update({k: v for k, v in pre.items() if k != 'side'})
+            if pre.get('side'):
+                out['side'] = pre['side']
             return out
     return None
 
@@ -608,7 +624,7 @@ def eff_patterns():
     add(r'あなたは(?P<n>\d+)枚引いて手札を(?P<k>\d+)枚(?P<v>リムーブ|ドロップ)' + V('する', 'し') + END,
         lambda m: [{'op': 'draw', 'n': int(m.group('n'))}, {'op': 'pick', 'from': 'hand', 'to': 'remove', 'f': {}, 'n': int(m.group('k')), 'upto': 0} if m.group('v') == 'リムーブ' else {'op': 'discard', 'n': int(m.group('k'))}])
     # --- 14차 ---
-    add(r'この【夢を見ない】でドロップした(?P<d>[^、。]*?)を(?P<r>レストで)?登場させ' + V('る', '') + END,
+    add(r'この【夢を?見ない】でドロップした(?P<d>[^、。]*?)を(?P<r>レストで)?登場させ' + V('る', '') + END,
         lambda m: (lambda f: f is not None and {'op': 'summonRested' if m.group('r') else 'summon', 'to': 'ycard', 'f': f})(_zdesc(m.group('d'))))
     add(r'あなたの山札を上から(?P<n>\d+)枚、表を見ずに裏(?:向き)?のままテリトリーにログとしてつけ' + V('る', '') + MAY + END,
         lambda m: [{'op': 'logAttach'} for _ in range(int(m.group('n')))])
@@ -726,6 +742,199 @@ def eff_patterns():
     add(r'相手は自身の(?P<d>[^、。]*?)ユニット全てを(?:望む順で)?山札の下に置' + V('く', 'き') + END,
         lambda m: (lambda f: f is not None and {'op': 'deckBottom', 'to': {'all': dict(f, side='opp', type='unit')}})(parse_desc(m.group('d')) if m.group('d') else {}))
     add(r'あなたは手札が(?P<n>\d+)枚になるように引' + V('く', 'き') + END, lambda m: {'op': 'drawTo', 'n': int(m.group('n'))})
+    # --- 24차: 카드별 특수 효과 ---
+    OPPU = {'side': 'opp', 'type': 'unit'}
+    add(r'それが持つアイコン能力(?P<k>\d+)つにつき、(?:そのターン中、)?そのユニットのパワーを(?P<n>[+-]\d+)' + END, lambda m: {'op': 'pow', 'n': int(m.group('n')), 'to': 'evt', 'per': {'cnt': 'evIcons', 'k': int(m.group('k'))}})
+    add(r'そのユニットと共通の属性を持つ、あなたのドロップゾーン(?P<k>\d+)枚につき、(?:そのターン中、)?そのユニットのパワーを(?P<n>[+-]\d+)' + END,
+        lambda m: {'op': 'pow', 'n': int(m.group('n')), 'to': 'evt', 'per': {'cnt': 'dropShareAttrEvt', 'k': int(m.group('k'))}})
+    add(r'(?P<k>\d+)枚以上あるなら、さらにヒットを(?P<n>[+-]\d+)' + END, lambda m: {'op': 'if', 'c': [{'dropShareAttrEvtGE': int(m.group('k'))}], 'then': [{'op': 'hit', 'n': int(m.group('n')), 'to': 'evt'}]})
+    add(r'あなたの手札から、アタックしたユニットより総コストが小さい、共通の属性を持つユニットカードを(?P<n>\d+)枚まで登場させ' + V('る', '') + END,
+        lambda m: {'op': 'pick', 'from': 'hand', 'to': 'field', 'f': {'type': 'unit', 'costLTevt': 1, 'shareAttrEvt': 1}, 'n': int(m.group('n')), 'upto': 1})
+    add(r'あなたの手札の、?アタックしたユニットより総コストが小さい、共通の属性を持つユニットカードを(?P<n>\d+)枚まで登場させ' + V('る', '') + END,
+        lambda m: {'op': 'pick', 'from': 'hand', 'to': 'field', 'f': {'type': 'unit', 'costLTevt': 1, 'shareAttrEvt': 1}, 'n': int(m.group('n')), 'upto': 1})
+    add(r'その(?:ドロップした)?(?P<d>[^、。]*?)ユニットカードを(?P<r>レストで)?登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'summonRested' if m.group('r') else 'summon', 'to': 'evtCard', 'f': f})(parse_desc(m.group('d')) if m.group('d') else {}))
+    add(r'あなたの山札を上から1枚公開し、それがドロップしたカードと同じ称号なら登場させ、違うなら手札に加え' + V('る', '') + END, lambda m: {'op': 'revealTop', 'f': {'sameTitleEvt': 1}, 'yes': 'field', 'no': 'hand'})
+    add(r'あなたのライフの先頭を見' + V('る', '') + END, lambda m: {'op': 'peekLife'})
+    add(r'それをドロップしこれをライフの先頭に置' + V('く', 'き', 'い') + MAY + END, lambda m: [{'op': 'confirm', 'text': '라이프 맨 앞을 드롭하고 이 카드를 놓을까요?', 'alt': 1, 'no': [{'op': 'stop'}]}, {'op': 'lifeDrop', 'n': 1}, {'op': 'life', 'to': 'card'}])
+    add(r'⁅怪異(?P<a>(?:⁅[^⁆]+⁆)+)⁆(?:\([^)]*\))?(?P<x>[^。]+)' + END,
+        lambda m: (lambda r: r is not None and {'op': 'if', 'c': [{'droppedAttr': re.findall(r'⁅([^⁆]+)⁆', m.group('a'))}], 'then': r})(parse_effects(re.sub(r'^さらに', '', m.group('x')))))
+    add(r'あなたのフィールドの、「(?P<nm>[^」]+)」かこのユニットをドロップ' + V('する', 'し') + END,
+        lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'or': [{'nameEq': m.group('nm')}, {'selfOnly': 1}]}, 'n': 1, 'upto': 0}, {'op': 'drop', 'to': 'T'}])
+    add(r'それら(?:全て)?を手札に戻' + V('す', 'し') + END, lambda m: {'op': 'milledToHand'})
+    add(r'あなたのエナジーゾーンの、?総コストが対象の総コスト以下のユニットカードを(?P<n>\d+)枚(?P<up>まで)?登場させ' + V('る', '') + END,
+        lambda m: {'op': 'pick', 'from': 'energy', 'to': 'field', 'f': {'type': 'unit', 'costLE_T': 1}, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0})
+    add(r'(?:そのターン中、)?(?:あなたは)?次の相手(?:の)?ターン中、そのユニットに【(?P<k>[^】]+)】を与え' + V('る', '') + END,
+        lambda m: m.group('k') in KWMAP and {'op': 'kw', 'kw': KWMAP[m.group('k')], 'to': 'summoned', 'dur': 'duringOpp'})
+    add(r'(?:次の相手(?:の)?ターン中、)?相手は追加で手札を(?P<n>\d+)枚ドロップしない限りアタックができない' + END,
+        lambda m: {'op': 'restrict', 'r': {'kind': 'attackTax', 'n': int(m.group('n')), 'who': 'opp', 'dur': 'nextOppOnly'}})
+    add(r'相手は自身のユニットで最もパワーの高いユニットから1枚選ぶ。あなたは自身のユニットで最もパワーの低いユニットから1枚選ぶ。各プレイヤーの選ばれなかったユニット全てを手札に戻' + V('す', 'し') + END,
+        lambda m: [{'op': 'asOpp', 'do': [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMax': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}, {'op': 'bounceUnkept'}]},
+                   {'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMin': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}])
+    add(r'相手のテリトリーを閉じ' + V('る', '') + END, lambda m: {'op': 'closeTerr', 'who': 'opp'})
+    add(r'(?:そのターン中、)?対象はブロックができず、パワーを(?P<n>\d+)になるよう増減させ' + V('る', '') + END, lambda m: [{'op': 'kw', 'kw': 'noBlock', 'to': 'T'}, {'op': 'powSet', 'n': int(m.group('n')), 'to': 'T'}])
+    add(r'あなたの山札をシャッフルし、それらを全てライフの先頭に置' + V('く', 'き') + END, lambda m: {'op': 'deckAllToLife'})
+    add(r'あなたの山札を上から(?P<n>\d+)枚見て、対象とコスト差が(?P<d>\d+)のユニットカードを(?P<k>\d+)枚まで登場させ、山札をシャッフル' + V('する', 'し') + END,
+        lambda m: {'op': 'look', 'n': int(m.group('n')), 'f': {'type': 'unit', 'costDiffT': int(m.group('d'))}, 'k': int(m.group('k')), 'to': 'field', 'rest': 'shuffle'})
+    add(r'次の相手のターン中にそのユニットがドロップした時、(?P<x>[^。]+)' + END,
+        lambda m: (lambda r: r is not None and {'op': 'watchU', 'on': 'leave', 'to': 'summoned', 'dur': 'duringOpp', 'do': r})(parse_effects(m.group('x'))))
+    add(r'(?:そのターン中、)?そのユニットがバトルに勝利した時、(?P<x>[^。]+)' + END,
+        lambda m: (lambda r: r is not None and {'op': 'watchU', 'on': 'win', 'to': 'summoned', 'do': r})(parse_effects(m.group('x').replace('そのユニット', 'このユニット'))))
+    add(r'相手の、?エースと⁅B⁆のユニット全てを手札に戻し、次の相手のターン中、エースと⁅B⁆のユニットはレストで登場す' + V('る', '') + END,
+        lambda m: [{'op': 'bounce', 'to': {'all': {'side': 'opp', 'type': 'unit', 'or': [{'ace': 1}, {'icon': 'buster'}]}}}, {'op': 'restrict', 'r': {'kind': 'enterRested', 'f': {'or': [{'ace': 1}, {'icon': 'buster'}]}, 'who': 'opp', 'dur': 'nextOppOnly'}}])
+    add(r'あなたのドロップゾーンの(?P<l>(?:【[^】]+】、?)+)を望む枚数、このユニットに重ねて着せ' + V('る', '') + END,
+        lambda m: [{'op': 'tgt', 'zone': 'drop', 'f': {'or': [{'name': x} for x in re.findall(r'【([^】]+)】', m.group('l'))]}, 'n': 99, 'upto': 1}, {'op': 'attachT', 'to': 'self'}])
+    add(r'このユニットとそれら全てをリムーブ' + V('する', 'し') + END, lambda m: {'op': 'remove', 'to': 'self'})
+    add(r'あなたのドロップゾーンの共通の色を持たないカードを(?P<n>\d+)枚対象とし、その中から1枚をフィールドに伏せ、残りを山札の下に望む順で置' + V('く', 'き') + END,
+        lambda m: [{'op': 'tgt', 'zone': 'drop', 'f': {}, 'n': int(m.group('n')), 'upto': 0, 'distinct': 'color'}, {'op': 'tSplit', 'first': 'set', 'rest': 'bottom'}])
+    add(r'あなたのドロップゾーンの、互いに同じカード名の(?P<d>[^、。]*?)を(?P<n>\d+)枚対象とし、対象を手札に戻' + V('す', 'し') + END,
+        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'zone': 'drop', 'f': f, 'n': int(m.group('n')), 'upto': 0, 'same': 'name'}, {'op': 'bounce', 'to': 'T'}])(_zdesc(m.group('d'))))
+    add(r'あなたの伏せたカードを1枚まで対象とし、相手はそのカードがユニットカードかコマンドカードかを予想し、あなたは対象を公開' + V('する', 'し') + END,
+        lambda m: [{'op': 'tgt', 'zone': 'set', 'f': {}, 'n': 1, 'upto': 1}, {'op': 'choose', 'who': 'opp', 'opts': [[{'op': 'setCtx', 'k': 'guess', 'v': 'unit'}], [{'op': 'setCtx', 'k': 'guess', 'v': 'command'}]], 'labels': ['유닛 카드라고 예상', '커맨드 카드라고 예상'], 'text': '상대가 엎어 둔 카드의 종류를 예상하세요'}, {'op': 'revealT'}])
+    add(r'あなたの山札を上から、あなたのエナジーの色の数だけ見て、それらを全てフィールドに伏せ' + V('る', '') + END,
+        lambda m: {'op': 'look', 'n': 1, 'per': {'zone': 'colors', 'side': 'own', 'k': 1}, 'f': {}, 'k': 99, 'to': 'set', 'rest': 'top'})
+    add(r'次のあなたのターンの開始時、あなたの伏せたカード全てをドロップさせ' + V('る', '') + END, lambda m: {'op': 'delay', 'at': 'myStart', 'do': [{'op': 'dropSetAll'}]})
+    add(r'(?:さらに)?対象はリムーブしたカードの能力を全て得' + V('る', '') + END, lambda m: {'op': 'copyAbil', 'from': 'milled', 'to': 'T'})
+    add(r'(?:そのターン中、)?このユニットは(?:対象の)?(?P<p>パワーと)?能力を全て得(?:て|る)' + END, lambda m: ([{'op': 'powByT', 'to': 'self'}] if m.group('p') else []) + [{'op': 'copyAbil', 'from': 'T', 'to': 'self'}])
+    add(r'(?:そのターン中、)?このユニットは対象のパワーと能力を全て得' + V('る', '') + END, lambda m: [{'op': 'powByT', 'to': 'self'}, {'op': 'copyAbil', 'from': 'T', 'to': 'self'}])
+    add(r'(?:そのターン中、)?このユニットは対象が持つ【(?P<k>[^】]+)】を全て得' + V('る', '') + END, lambda m: {'op': 'copyAbil', 'from': 'T', 'to': 'self', 'kwOnly': m.group('k')})
+    add(r'(?:そのターン中、)?このユニットはそのエースカードの【(?P<k>[^】]+)】を全て得' + V('る', '') + END, lambda m: {'op': 'copyAbil', 'from': 'milled', 'to': 'self', 'kwOnly': m.group('k')})
+    add(r'称号を無視して発動でき' + V('る', '') + END, lambda m: {'op': 'noop'})
+    add(r'ユニット全てとドロップしたこのカードをリムーブ' + V('する', 'し') + END, lambda m: [{'op': 'remove', 'to': {'all': {'type': 'unit'}}}, {'op': 'remove', 'to': 'card'}])
+    add(r'あなたのドロップゾーンの(?P<a>[^、。]+?)か、相手のドロップゾーンの(?P<b>[^、。]+?)を合計(?P<n>\d+)枚(?P<up>まで)?対象とし、対象をリムーブ' + V('する', 'し') + END,
+        lambda m: (lambda fa, fb: fa is not None and fb is not None and [{'op': 'tgt', 'zone': 'drop', 'f': {'orSide': [dict(fa, side='own'), dict(fb, side='opp')]}, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0}, {'op': 'remove', 'to': 'T'}])(_zdesc(m.group('a')), _zdesc(m.group('b'))))
+    add(r'あなたのテリトリーゾーンの「(?P<nm>[^」]+)」を1枚、ユニット面で登場させ' + V('る', '') + END, lambda m: {'op': 'summonFromTerr', 'name': m.group('nm')})
+    add(r'(?:そのターン中、)?ヒットを(?P<n>[+-]\d+)' + END, lambda m: {'op': 'hit', 'n': int(m.group('n')), 'to': '$prev'})
+    add(r'次のエンドフェイズ開始時、そのユニットをドロップさせ' + V('る', '') + END, lambda m: {'op': 'delay', 'at': 'endStart', 'do': [{'op': 'drop', 'to': 'summoned'}]})
+    add(r'このユニットが持っていたクラスカード(?P<k>\d+)枚につき、(?P<n>\d+)枚引' + V('く', 'き') + END, lambda m: {'op': 'draw', 'n': int(m.group('n')), 'per': {'cnt': 'evtClass', 'k': int(m.group('k'))}})
+    add(r'ユニットを1枚対象とし、対象のヒット(?P<k>\d+)につき、相手は自身のドロップゾーンを(?P<n>\d+)枚リムーブ' + V('する', 'し') + END,
+        lambda m: [{'op': 'tgt', 'f': {'type': 'unit'}, 'n': 1, 'upto': 0}, {'op': 'oppDropRemove', 'n': int(m.group('n')), 'per': {'tHit': 1}}])
+    add(r'相手のユニット全てに、このユニットのパワーと同じダメージを与え' + V('る', '') + END, lambda m: {'op': 'dmgPow', 'from': 'self', 'to': {'all': OPPU}})
+    add(r'次の相手ターン中、相手はコスト(?P<n>\d+)のカードをプレイできない' + END, lambda m: {'op': 'restrict', 'r': {'kind': 'noPlayCostEq', 'n': int(m.group('n')), 'who': 'opp', 'dur': 'nextOppOnly'}})
+    add(r'ドロップした際、対象が持つ能力は全て発動しない' + END, lambda m: {'op': '_attach', 'silent': 1})
+    add(r'相手は自身のライフを前から(?P<n>\d+)枚公開し、その中の(?P<d>[^、。]+?)を(?P<k>\d+)枚ドロップし、残りを望む順でライフの先頭に置' + V('く', 'き') + END,
+        lambda m: (lambda f: f is not None and {'op': 'asOpp', 'do': [{'op': 'lifeLookDrop', 'n': int(m.group('n')), 'f': f, 'k': int(m.group('k'))}]})(_zdesc(m.group('d'))))
+    add(r'あなたの、フィールドの(?P<a>[^、。]+?)(?P<n>\d+)枚と、手札かフィールドの(?P<b>[^、。]+?)(?P<k>\d+)枚をそれぞれドロップ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda fa, fb: fa is not None and fb is not None and [{'op': 'confirm', 'text': '이 효과를 쓸까요?', 'alt': 1, 'no': [{'op': 'stop'}]},
+            {'op': 'tgt', 'f': dict(fa, side='own', type='unit'), 'n': 1, 'upto': 0}, {'op': 'drop', 'to': 'T'},
+            {'op': 'choose', 'opts': [[{'op': 'pick', 'from': 'hand', 'to': 'drop', 'f': fb, 'n': 1, 'upto': 0}], [{'op': 'tgt', 'f': dict(fb, side='own', type='unit'), 'n': 1, 'upto': 0}, {'op': 'drop', 'to': 'T'}]], 'labels': ['패에서 드롭', '필드에서 드롭']}])(_zdesc(m.group('a')), _zdesc(m.group('b'))))
+    add(r'対象とこのユニットを(?P<st>スタンドで|レストで)?入れ替え' + V('る', '') + MAY + END, lambda m: {'op': 'swapT', **({'stand': 1} if m.group('st') == 'スタンドで' else {'rested': 1} if m.group('st') else {})})
+    add(r'あなたの(?P<z>エナジーゾーンの)?(?P<d>[^、。]+?)(?:のエナジー|ユニットカード)(?P<n>\d+)枚をこのユニットと(?P<st>スタンドで|レストで)?入れ替え' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'zone': 'energy', 'f': dict(f, **({'type': 'unit'} if 'ユニットカード' in m.group(0) else {})), 'n': int(m.group('n')), 'upto': 0}, {'op': 'swapT', **({'stand': 1} if m.group('st') == 'スタンドで' else {})}])(parse_desc(m.group('d')) or parse_desc(m.group('d') + 'の')))
+    add(r'(?:あなたは)?山札をシャッフルし' + V('', 'て') + END, lambda m: {'op': 'shuffle'})
+    add(r'それが(?P<a>[^、。]+?)ならドロップゾーンから登場させ、(?:それが)?(?P<b>[^、。]+?)なら、?コストを払わずに?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda fa, fb: fa is not None and fb is not None and [{'op': 'if', 'c': [{'milledF': fa}], 'then': [{'op': 'summonMilled'}]}, {'op': 'if', 'c': [{'milledF': fb}], 'then': [{'op': 'playMilled', **({'may': 1} if m.group('may') else {})}]}])(_cdesc(m.group('a')), _cdesc(m.group('b'))))
+    add(r'相手は(?P<n>\d+)枚引き、自身の手札を全て公開' + V('する', 'し') + END, lambda m: [{'op': 'draw', 'n': int(m.group('n')), 'who': 'opp'}, {'op': 'revealOppHand'}])
+    add(r'対象はこのユニットがフィールドにいる間、アタックされず、他の効果の対象にならず、【デコイ】を失い、スタンドフェイズにスタンドしない' + END,
+        lambda m: [{'op': 'kw', 'kw': k, 'to': 'T', 'dur': 'whileSrc'} for k in ('noBeAttacked', 'fxImmune', 'loseDecoy', 'noStand')])
+    add(r'対象は次の相手のターン中、アタックされず、他の効果の対象にならず、【デコイ】を失' + V('う', 'い') + END,
+        lambda m: [{'op': 'kw', 'kw': k, 'to': 'T', 'dur': 'duringOpp'} for k in ('noBeAttacked', 'fxImmune', 'loseDecoy')])
+    add(r'エナジーのこのカードを登場させ' + V('る', '') + MAY + END, lambda m: {'op': 'summon', 'to': 'card'})
+    add(r'次のエンドフェイズ開始時、(?:登場させたこのユニット|このユニット)をエナジーゾーンに置' + V('く', 'き') + END, lambda m: {'op': 'delay', 'at': 'endStart', 'do': [{'op': 'energy', 'to': 'self'}]})
+    add(r'次のエンドフェイズ開始時、それらをエナジーゾーンに置' + V('く', 'き') + END, lambda m: {'op': 'delay', 'at': 'endStart', 'do': [{'op': 'energy', 'to': 'summoned'}]})
+    add(r'あなたの山札を上から(?P<n>\d+)枚公開してよい。その中の(?P<d>.+?)を全てエナジーゾーンに置き、残りをドロップ' + V('する', 'し') + END,
+        lambda m: (lambda fs: fs and [{'op': 'confirm', 'text': '덱 위를 공개할까요?', 'alt': 1, 'no': [{'op': 'stop'}]}, {'op': 'look', 'n': int(m.group('n')), 'f': {'or': fs}, 'k': 99, 'to': 'energy', 'rest': 'drop', 'auto': 1}])(_each_filters(m.group('d'))))
+    add(r'相手は自身のユニットで最もパワーの高いユニットから1枚をドロップ' + V('する', 'し') + END,
+        lambda m: {'op': 'asOpp', 'do': [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMax': 1}, 'n': 1, 'upto': 0}, {'op': 'drop', 'to': 'T'}]})
+    add(r'(?:そのターン中、)?このユニットのパワーとヒットを対象のパワーとヒット分だけそれぞれ増加させ' + V('る', '') + END, lambda m: [{'op': 'powByT', 'to': 'self'}, {'op': 'hitByT', 'to': 'self'}])
+    add(r'あなたの裏のエナジー全てを表にし、表にした(?P<k>\d+)枚につき、(?P<x>[^。]+)' + END,
+        lambda m: (lambda r: r is not None and [{'op': 'flipAll'}] + [dict(st, per={'milled': 1, 'k': int(m.group('k'))}) if st.get('op') not in ('tgt', 'if') else st for st in r])(parse_effects(m.group('x'))))
+    add(r'(?:そのターン中、)?対象がドロップする際、代わりにエナジーゾーンに置' + V('く', 'き') + END, lambda m: {'op': 'toEnergyOnDrop', 'to': 'T'})
+    add(r'あなたの手札かエナジーゾーンから、?(?P<d>[^、。]+?)を(?P<n>\d+)枚(?P<up>まで)?(?P<r>レストで)?登場させ' + V('る', '') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'handOrEnergy', 'to': 'field', 'f': f, 'n': int(m.group('n')), 'upto': 1 if (m.group('up') or m.group('may')) else 0, **({'rested': 1} if m.group('r') else {})})(_zdesc(m.group('d'))))
+    add(r'あなたの手札の、?対象よりコストが(?P<a>\d+)または(?P<b>\d+)高いユニットカード1枚と、対象をスタンドで入れ替え' + V('る', '') + MAY + END,
+        lambda m: [{'op': 'pick', 'from': 'hand', 'to': 'field', 'f': {'type': 'unit', 'costTplus': [int(m.group('a')), int(m.group('b'))]}, 'n': 1, 'upto': 1}, {'op': 'if', 'c': [{'did': 1}], 'then': [{'op': 'bounce', 'to': 'T'}]}])
+    add(r'あなたの(?P<d>[^、。]+?)のエナジーを1枚、?コストを払わずに?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': 'energy', 'f': f, 'may': 1})(parse_desc(m.group('d')) or _zdesc(m.group('d'))))
+    add(r'このカードをあなたのユニット1枚につけ' + V('る', '') + MAY + END, lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 1}, {'op': 'dressTo', 'to': 'T'}])
+    add(r'(?:相手のユニットの枚数があなたのユニット以上なら、)?手札に戻す代わりに(?P<r>レストで)?登場させてよい' + END, lambda m: {'op': '$altSummon', **({'rested': 1} if m.group('r') else {})})
+    add(r'代わりに(?P<r>レストで)?登場させてよい' + END, lambda m: {'op': '$altSummon', **({'rested': 1} if m.group('r') else {})})
+    add(r'\+(?P<a>\d+)の代わりに\+(?P<b>\d+)' + END, lambda m: {'op': '$altN', 'a': int(m.group('a')), 'b': int(m.group('b'))})
+    add(r'(?:山札を上から)?(?P<a>\d+)枚見る代わりに(?P<b>\d+)枚見る' + END, lambda m: {'op': '$altN', 'a': int(m.group('a')), 'b': int(m.group('b'))})
+    add(r'対象を望む順でプレイ' + V('する', 'し') + END, lambda m: {'op': 'playFreeT'})
+    add(r'この効果でドロップした相手のユニット(?P<k>\d+)枚につき、相手に(?P<n>\d+)ダメージ' + END, lambda m: {'op': 'lifeDmg', 'n': int(m.group('n')), 'who': 'opp', 'per': {'cnt': 'droppedOpp', 'k': int(m.group('k'))}})
+    add(r'あなたのエナジーゾーンにない色のカードを(?P<n>\d+)枚、あなたのドロップゾーンからエナジーゾーンに置' + V('く', 'き', 'い') + MAY + END,
+        lambda m: {'op': 'pick', 'from': 'drop', 'to': 'energy', 'f': {'colorNotInEnergy': 1}, 'n': int(m.group('n')), 'upto': 1})
+    add(r'(?:そのターン中、)?あなたの(?P<d>[^、。]+?)全てのヒットは減少しない' + END,
+        lambda m: (lambda f: f is not None and {'op': 'kw', 'kw': 'noHitDown', 'to': {'all': dict(f, side='own', type='unit')}})(_zdesc(m.group('d'))))
+    add(r'(?:そのターン中、)?あなたの、ショットアイコンでないカードがライフからダメージでドロップする際、代わりに手札に戻' + V('す', 'し') + END, lambda m: {'op': 'turnFlag', 'flag': 'lifeToHandNonShot'})
+    add(r'あなたの、(?P<a>[^、。]+?)のユニット(?P<n>\d+)枚と(?P<b>[^、。]+?)のエナジーを(?P<k>\d+)枚対象とし、対象を入れ替え' + V('る', '') + END,
+        lambda m: (lambda fa, fb: fa is not None and fb is not None and [{'op': 'tgt', 'f': dict(fa, side='own', type='unit'), 'n': 1, 'upto': 0}, {'op': 'tgt', 'zone': 'energy', 'f': dict(fb, side='own'), 'n': 1, 'upto': 0, 'add': 1}, {'op': 'swapUnitEnergy'}])(parse_desc(m.group('a') + 'の') or parse_desc(m.group('a')), parse_desc(m.group('b') + 'の') or parse_desc(m.group('b'))))
+    add(r'相手の、?コストがあなたの裏のエナジーの枚数以下のユニットを(?P<n>\d+)枚(?P<up>まで)?対象とし、(?:対象を)?ドロップさせ' + V('る', '') + END,
+        lambda m: [{'op': 'tgt', 'f': {'side': 'opp', 'type': 'unit', 'costLEdownE': 1}, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0}, {'op': 'drop', 'to': 'T'}])
+    add(r'エナジーが(?P<n>\d+)枚以上の各プレイヤーは、自身のテリトリーを閉じ' + V('る', '') + END, lambda m: {'op': 'closeTerrIf', 'energyGE': int(m.group('n'))})
+    add(r'エンドフェイズに移行し、(?:そのターン中、)?相手のユニット全てのヒットを0になるよう増減させ' + V('る', '') + END, lambda m: [{'op': 'hitSet', 'n': 0, 'to': {'all': OPPU}}, {'op': 'toEndPhase'}])
+    add(r'対象とライフの先頭を入れ替え' + V('る', '') + END, lambda m: {'op': 'swapTLife'})
+    add(r'相手はこの効果でエナジーゾーンに置いたユニットカードをレストで登場させ' + V('る', '') + END, lambda m: {'op': 'summonTcard', 'rested': 1})
+    add(r'レストしているユニットを(?P<n>\d+)枚対象とし、互いのパワー分、ダメージを与えあ' + V('う', 'い') + END, lambda m: [{'op': 'tgt', 'f': {'type': 'unit', 'rested': 1}, 'n': int(m.group('n')), 'upto': 0}, {'op': 'mutualDmg'}])
+    add(r'それがコスト(?P<n>\d+)以下のコマンドカードなら、手札に戻すかコストを払わずプレイ' + V('する', 'し') + END,
+        lambda m: {'op': 'if', 'c': [{'milledF': {'costLE': int(m.group('n')), 'type': 'command'}}], 'then': [{'op': 'choose', 'opts': [[{'op': 'milledToHand'}], [{'op': 'playMilled'}]], 'labels': ['패로 되돌린다', '코스트 없이 플레이한다']}]})
+    add(r'それを、?コストを払わずプレイ' + V('する', 'し') + MAY + END, lambda m: {'op': 'playMilled', **({'may': 1} if m.group('may') else {})})
+    add(r'(?:そのターン中、)?他のユニット全ては「(?P<nm>[^」]+)」として扱う' + END, lambda m: {'op': 'kw', 'kw': 'nameAs:' + m.group('nm'), 'to': {'all': {'type': 'unit', 'notSelf': 1}}})
+    add(r'(?:そのターン中、)?このユニットは【デコイ】を得て、カード名を「(?P<nm>[^」]+)」として扱う' + END, lambda m: [{'op': 'kw', 'kw': 'decoy', 'to': 'self'}, {'op': 'kw', 'kw': 'nameAs:' + m.group('nm'), 'to': 'self'}])
+    add(r'その公開したカード(?P<k>\d+)枚につき、このユニットにクラスカードを(?P<n>\d+)枚生成してつけ' + V('る', '') + END, lambda m: {'op': 'genClass', 'n': int(m.group('n')), 'to': 'self', 'per': {'milled': 1, 'k': int(m.group('k'))}})
+    add(r'あなたのクラスカードのエナジーを(?P<n>\d+)枚までそのユニットにつけ' + V('る', '') + END, lambda m: {'op': 'classEnergyAttach', 'n': int(m.group('n')), 'to': 'summoned'})
+    add(r'相手のユニットから、パワーの合計がこのユニットのパワー以下になるように(?P<n>\d+)枚まで対象と' + V('し', 'する') + END,
+        lambda m: {'op': 'tgt', 'f': {'side': 'opp', 'type': 'unit'}, 'n': int(m.group('n')), 'upto': 1, 'sumPowLEself': 1})
+    add(r'対象は次の相手のスタンドフェイズにスタンドしない' + END, lambda m: {'op': 'noStandNext', 'to': 'T'})
+    add(r'あなたのつけた契約書(?:の中)?から、?(?P<d>[^、。]+?)を(?P<n>\d+)枚(?P<up>まで)?対象と' + V('し', 'する') + END,
+        lambda m: (lambda f: f is not None and {'op': 'tgt', 'zone': 'contract', 'f': f, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0})(_zdesc(m.group('d'))))
+    add(r'あなたのつけた契約書から(?P<d>[^、。]+?)を(?P<n>\d+)枚、?コストを払わずに?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': 'contract', 'f': f, 'may': 1})(_zdesc(m.group('d'))))
+    add(r'対象をレストでエナジーゾーンに置' + V('く', 'き') + END, lambda m: {'op': 'energy', 'to': 'T', 'rested': 1})
+    add(r'相手は自身の手札を全て公開し、あなたはその中の(?P<d>[^、。]+?)を(?P<n>\d+)枚選び、そのカードと同じコストの相手の手札を全てドロップさせ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and [{'op': 'revealOppHand'}, {'op': 'pick', 'from': 'hand', 'to': 'select', 'f': dict(f, side='opp'), 'n': int(m.group('n')), 'upto': 0}, {'op': 'dropOppHandCostEqMilled'}])(_zdesc(m.group('d'))))
+    add(r'あなたの、山札を上から(?P<n>\d+)枚までドロップ' + V('し', 'する') + END, lambda m: {'op': 'choose', 'opts': [[{'op': 'mill', 'n': k}] for k in range(int(m.group('n')), -1, -1)], 'labels': [f'{k}장 드롭' for k in range(int(m.group('n')), -1, -1)]})
+    add(r'(?:あなたの)?ドロップゾーンから、?(?P<d>[^、。]+?)を(?P<n>\d+)枚(?P<up>まで)?(?P<r>レストで)?登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'drop', 'to': 'field', 'f': f, 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0, **({'rested': 1} if m.group('r') else {})})(_zdesc(m.group('d'))))
+    add(r'相手は自身の手札を全て公開し、その中からコストが最も高いか最も低いカードを(?P<n>\d+)枚ドロップ' + V('する', 'し') + END,
+        lambda m: [{'op': 'revealOppHand'}, {'op': 'asOpp', 'do': [{'op': 'pick', 'from': 'hand', 'to': 'drop', 'f': {'costExtreme': 1}, 'n': int(m.group('n')), 'upto': 0}]}])
+    add(r'あなたの(?P<d>[^、。]+?)ユニット全ては、次の相手ターン中、レストしていてもブロックができ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'kw', 'kw': 'blockRested', 'to': {'all': dict(f, side='own', type='unit')}, 'dur': 'duringOpp'})(parse_desc(m.group('d')) or _zdesc(m.group('d'))))
+    add(r'その登場したユニットが持つアイコン能力の【スカウト(?P<n>\d+):登場時】は(?P<k>\d+)回発動' + V('する', 'し') + END, lambda m: [{'op': 'scout', 'n': int(m.group('n'))} for _ in range(int(m.group('k')) - 1)])
+    add(r'(?:このターン|そのターン中、)あなたのカードがどこからでもドロップする際、代わりにそれをリムーブ' + V('する', 'し') + END, lambda m: {'op': 'turnFlag', 'flag': 'dropToRemove'})
+    add(r'(?:そのターン中、)?あなたは、あなたのドロップゾーンのカードを、手札にあるかのように、エナジーに置いたりプレイでき' + V('る', '') + END, lambda m: {'op': 'turnFlag', 'flag': 'dropAsHand'})
+    add(r'あなたのライフの枚数を数え' + V('る', '') + END, lambda m: {'op': 'saveLifeN'})
+    add(r'あなたの山札とライフを全て見て、その中から(?P<d>[^、。]+?)を(?P<n>\d+)枚まで公開して手札に加え' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'deckLife', 'to': 'hand', 'f': f, 'n': int(m.group('n')), 'upto': 1})(_zdesc(m.group('d'))))
+    add(r'あなたのライフを全て山札に戻してシャッフルし、山札を上から、数えたライフの枚数と同じ枚数ライフに置' + V('く', 'き') + END, lambda m: {'op': 'lifeReset'})
+    add(r'ユニットを1枚対象とし、エナジーゾーンに置' + V('く', 'き') + END, lambda m: [{'op': 'tgt', 'f': {'type': 'unit'}, 'n': 1, 'upto': 0}, {'op': 'energy', 'to': 'T'}])
+    add(r'そのカードが置かれたエナジーゾーンから、コストがそのエナジーゾーンの枚数以下のユニットカードを1枚対象とし、そのエナジーのプレイヤーは対象を登場させ' + V('る', '') + END, lambda m: {'op': 'energyOwnerSummon'})
+    add(r'相手ターンなら、そのターン中、そのユニットではアタックできない' + END, lambda m: {'op': 'if', 'c': [{'oppTurn': 1}], 'then': [{'op': 'kw', 'kw': 'noAttack', 'to': 'summoned'}]})
+    add(r'このゲーム中、ずっとあなたの追加ターンを行' + V('う', 'い') + END, lambda m: {'op': 'extraForever'})
+    add(r'その効果をこのカードの効果として使' + V('う', 'い', 'っ') + MAY + END, lambda m: {'op': 'useMilledEffect', 'may': 1})
+    add(r'あなたの、フィールドとドロップゾーンのユニットカードをそれぞれ1枚対象と' + V('し', 'する') + END,
+        lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit'}, 'n': 1, 'upto': 0}, {'op': 'tgt', 'zone': 'drop', 'f': {'type': 'unit'}, 'n': 1, 'upto': 0, 'add': 1}])
+    add(r'それらを入れ替え' + V('る', '') + MAY + END, lambda m: {'op': 'swapFieldDrop'})
+    add(r'相手は自身のドロップゾーンの、?(?P<l>[^、。]+?)全てを山札に戻してシャッフル' + V('する', 'し') + END,
+        lambda m: (lambda fs: fs and {'op': 'oppDropToDeck', 'f': {'or': fs}})(_each_filters(m.group('l')) or ([_zdesc(m.group('l'))] if _zdesc(m.group('l')) else None)))
+    add(r'あなたの山札を上から1枚、表でテリトリーに契約書としてつけ' + V('る', '') + MAY + END, lambda m: {'op': 'contract', 'n': 1})
+    # --- 25차 ---
+    add(r'あなたのつけたログを全て見て、その中の(?P<d>[^、。]+?)を(?P<n>\d+)枚まで登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'log', 'to': 'field', 'f': f, 'n': int(m.group('n')), 'upto': 1})(_zdesc(m.group('d'))))
+    # --- 26차 ---
+    add(r'あなたの手札(?:の|から)、?対象よりコストが(?P<a>\d+)または(?P<b>\d+)高いユニットカード1枚と、対象をスタンドで入れ替え' + V('る', '') + MAY + END,
+        lambda m: [{'op': 'pick', 'from': 'hand', 'to': 'field', 'f': {'type': 'unit', 'costTplus': [int(m.group('a')), int(m.group('b'))]}, 'n': 1, 'upto': 1}, {'op': 'if', 'c': [{'did': 1}], 'then': [{'op': 'bounce', 'to': 'T'}]}])
+    add(r'手札に戻すかコストを払わずプレイ' + V('する', 'し') + END, lambda m: {'op': 'choose', 'opts': [[{'op': 'milledToHand'}], [{'op': 'playMilled'}]], 'labels': ['패로 되돌린다', '코스트 없이 플레이한다']})
+    add(r'(?:あなたの、?)?山札を上から(?P<n>\d+)枚までドロップ' + V('し', 'する') + END, lambda m: {'op': 'choose', 'opts': [[{'op': 'mill', 'n': k}] for k in range(int(m.group('n')), -1, -1)], 'labels': [f'{k}장 드롭' for k in range(int(m.group('n')), -1, -1)]})
+    add(r'あなたの(?P<d>[^。]+?)エナジーを(?P<n>\d+)枚(?P<up>まで)?(?P<r>レストで)?登場させ' + V('る', '') + END,
+        lambda m: (lambda f: f is not None and {'op': 'pick', 'from': 'energy', 'to': 'field', 'f': dict(f, type='unit'), 'n': int(m.group('n')), 'upto': 1 if m.group('up') else 0, **({'rested': 1} if m.group('r') else {})})(parse_desc(m.group('d')) or parse_desc(re.sub(r'の$', '', m.group('d')) + 'の')))
+    add(r'あなたの(?P<d>[^、。]+?)エナジー(?P<n>\d+)枚とこのカードを入れ替え' + V('る', '') + MAY + END,
+        lambda m: (lambda f: f is not None and [{'op': 'tgt', 'zone': 'energy', 'f': dict(f, side='own'), 'n': 1, 'upto': 1}, {'op': 'swapT'}])(parse_desc(m.group('d')) or parse_desc(re.sub(r'の$', '', m.group('d')) + 'の')))
+    add(r'相手は自身のユニットで最もパワーの高いユニットから1枚選' + V('ぶ', 'び') + END,
+        lambda m: {'op': 'asOpp', 'do': [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMax': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}, {'op': 'bounceUnkept'}]})
+    add(r'あなたは自身のユニットで最もパワーの低いユニットから1枚選' + V('ぶ', 'び') + END, lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMin': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}])
+    add(r'あなたの(?:自身の)?ユニットで最もパワーの低いユニットから1枚選' + V('ぶ', 'び') + END, lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'powMin': 1}, 'n': 1, 'upto': 0}, {'op': 'markKeep'}])
+    add(r'各プレイヤーの選ばれなかったユニット全てを手札に戻' + V('す', 'し') + END, lambda m: {'op': 'noop'})
+    add(r'次の相手ターンまで、各プレイヤーは以下の規則を厳守す' + V('る', '') + END, lambda m: {'op': 'restrict', 'r': {'kind': 'secondUnitDrop', 'who': 'both', 'dur': 'nextOpp'}})
+    add(r'(?:そのターン中、)?あなたのユニットが次に【スキル】を発動する際、そのスキルコスト全てを払わずに発動でき' + V('る', '') + END, lambda m: {'op': 'turnFlag', 'flag': 'freeSkill'})
+    add(r'相手は自身のドロップゾーンを(?P<n>\d+)枚リムーブ' + V('する', 'し') + END, lambda m: {'op': 'oppDropRemove', 'n': int(m.group('n'))})
+    add(r'あなたの山札を上から1枚、表で契約書としてこのテリトリーにつけ' + V('る', '') + MAY + END, lambda m: {'op': 'contract', 'n': 1, 'may': 1})
+    add(r'あなたの山札を上から(?P<n>\d+)枚公開し、その中の(?P<d>.+?)を全てエナジーゾーンに置き、残りをドロップ' + V('する', 'し') + END,
+        lambda m: (lambda fs: fs and {'op': 'look', 'n': int(m.group('n')), 'f': {'or': fs}, 'k': 99, 'to': 'energy', 'rest': 'drop'})(_each_filters(m.group('d'))))
+    add(r'(?:そのターン1回だけ、)?あなたはエナジーを手札にあるかのように【ブライト】でドロップするカードに選べ' + V('る', '') + END, lambda m: {'op': 'turnFlag', 'flag': 'brightEnergy'})
+    add(r'あなたの(?P<z>手札|ドロップゾーン|エナジーゾーン)の(?P<d>[^、。]+?)を(?P<n>\d+)枚(?:まで)?コストを払わずに?プレイ' + V('する', 'し') + MAY + END,
+        lambda m: (lambda f: f is not None and {'op': 'playFree', 'from': {'手札': 'hand', 'ドロップゾーン': 'drop', 'エナジーゾーン': 'energy'}[m.group('z')], 'f': f, 'may': 1})(_zdesc(m.group('d'))))
     MV = {'手札に戻': 'bounce', '山札の下に置': 'deckBottom', '山札の上に置': 'deckTop', 'ライフの先頭に置': 'life', 'エナジーゾーンに置': 'energy', 'ドロップさせ': 'drop', 'リムーブ': 'remove'}
     LB = {'bounce': '패로 되돌림', 'deckBottom': '덱 맨 아래', 'deckTop': '덱 맨 위', 'life': '라이프 맨 앞', 'energy': '에너지 존', 'drop': '드롭', 'remove': '리무브'}
     def or_move(m):
@@ -973,6 +1182,17 @@ def _each_filters(d):
                 fr[k] = v
         return [fl, fr]
     return None
+
+
+KWMAP = {'デコイ': 'decoy', 'バーサーク': 'berserk', 'ブリッツ': 'blitz'}
+
+
+def _cdesc(d):
+    """「それが~なら」의 카드 묘사"""
+    if _zdesc(d) is not None:
+        return _zdesc(d)
+    d = re.sub(r'(?:の)?カード$', '', d)
+    return _zdesc(d) if _zdesc(d) is not None else parse_desc(d) or parse_desc(d + 'の')
 
 
 def _zdesc0(d):
@@ -1301,8 +1521,15 @@ def parse_effects(t):
     t = re.sub(r'(山札を上から\d+枚)公開してよい。公開したら、', r'\1公開し、', t)
     t = t.replace('シャッフルて', 'シャッフルして')
     t = re.sub(r'(^|、|。)あなたは自身の', r'\1あなたの', t)
-    t = re.sub(r'(^|、|。)あなたは(ドロップゾーン|手札|エナジーゾーン)の', r'\1あなたの\2の', t)
+    t = re.sub(r'(^|、|。|さらに)あなたは(ドロップゾーン|手札|エナジーゾーン)の', r'\1あなたの\2の', t)
     t = re.sub(r'相手ユニット', '相手のユニット', t)
+    t = re.sub(r'^\{自動\}', '', t)
+    t = t.replace('【夢を見ない】', '【夢見ない】')
+    t = re.sub(r'を(\d+)枚(まで)?、コストを払わず', r'を\1枚\2コストを払わず', t)
+    t = re.sub(r'(山札を上から\d+枚)公開してよい。その中の', r'\1公開し、その中の', t)
+    t = re.sub(r'(山札を上から\d+枚)公開する。それが', r'\1公開し、それが', t)
+    t = re.sub(r'(カード|ユニットカード)を全て(手札に加え|登場させ)', r'\1全てを\2', t)
+    t = re.sub(r'(\d+)億', lambda m: str(int(m.group(1)) * 100000000), t)
     t = re.sub(r'(^|、)手札から', r'\1あなたの手札から', t)
     t = re.sub(r'を(\d+)枚(まで)?対象とし、対象をコストを払わずプレイ', r'を\1枚\2コストを払わずプレイ', t)
     t = re.sub(r'(相手|あなた)の、(?=[^、。]*?ユニット全て)', r'\1の', t)
@@ -1342,6 +1569,12 @@ def _perspec(sp):
         return {'cnt': 'dropTitles'}
     if sp in ('相手が公開したユニットカード',):
         return {'milled': 1, 'f': {'type': 'unit'}}
+    m = re.fullmatch(r'(?P<w>あなた|相手)のドロップゾーンの「(?P<nm>[^」]+)」', sp)
+    if m:
+        return {'side': 'opp' if m.group('w') == '相手' else 'own', 'zone': 'drop', 'f': {'name': m.group('nm')}, 'notSrc': 1}
+    m = re.fullmatch(r'あなたのドロップゾーンの(?P<d>.+?)カードの色', sp)
+    if m and parse_desc(m.group('d')) is not None:
+        return {'cnt': 'colorsDrop', 'f': parse_desc(m.group('d'))}
     m = re.fullmatch(r'(?P<w>あなた|相手)の(?P<z>ドロップゾーンの|エナジーゾーンの|手札の)?、?(?P<d>.*?)(?:の)?(?P<n>ユニット|エナジー|カード|エース)(?:合計)?', sp)
     if m:
         f = (parse_desc(m.group('d')) or parse_desc(m.group('d') + 'の')) if m.group('d') else {}
@@ -1405,6 +1638,10 @@ def _resolve_prev(seq, ctx):
         for st in ctx:
             if st.get('op') in ('stand', 'rest', 'tgt') and st.get('to') in ('self', 'T') or st.get('op') == 'tgt':
                 last = {'op': 'pow', 'to': 'T' if st.get('op') == 'tgt' else st.get('to')}
+            elif st.get('op') in ('summon', 'summonRested') and st.get('to') in ('card', 'self'):
+                last = {'op': 'pow', 'to': 'self'}
+            elif st.get('op') in ('summonFromTerr',):
+                last = {'op': 'pow', 'to': 'summoned'}
     for st in seq:
         if st.get('op') == 'if':
             _resolve_prev(st.get('then', []), ctx + [x for x in seq if x is not st])
@@ -1668,7 +1905,7 @@ def _parse_seq(t, steps=None):
             t = t[m.end():]
             continue
         # 일반 「(무엇)N枚/つ/種類につき、」
-        m = re.match(r'(?P<sp>[^、。]+?)(?P<k>\d+)(?:枚|つ|種類)につき、', t)
+        m = re.match(r'(?P<sp>[^。]+?)(?P<k>\d+)(?:枚|つ|種類)につき、', t)
         if m and not re.match(r'(?:あなたの|相手の)(?:手札|エナジー|ドロップゾーン(?:のカード)?|ユニット|エナジーの色|リムーブゾーン|つけたログ)\d', t):
             per = _perspec(m.group('sp'))
             if per is not None:
@@ -1747,9 +1984,31 @@ def _parse_seq(t, steps=None):
                     els = parse_effects(inner[mel.end():])
                     if els is not None:
                         inner = inner[:mel.start()]
-                sub = parse_effects(inner[4:] if alt else inner)
+                ma = re.fullmatch(r'(?P<r>レストで)?登場させてよい', inner[4:]) if alt else None
+                sub = [{'op': '$altSummon', **({'rested': 1} if ma.group('r') else {})}] if ma else parse_effects(inner[4:] if alt else inner)
                 if sub is None:
                     return None
+                if len(sub) == 1 and sub[0].get('op') in ('$altSummon', '$altN') and steps:
+                    prev = steps.pop()
+                    ph = sub[0]
+                    new2 = copy.deepcopy(prev)
+                    if ph['op'] == '$altSummon':
+                        if new2.get('op') in ('bounce',):
+                            new2['op'] = 'summonRested' if ph.get('rested') else 'summon'
+                        elif new2.get('op') in ('pick', 'look'):
+                            new2['to'] = 'field'
+                            if ph.get('rested'):
+                                new2['rested'] = 1
+                        else:
+                            return None
+                        then = [{'op': 'confirm', 'text': '대신 등장시킬까요?', 'alt': 1, 'no': [prev]}, new2]
+                    else:
+                        if new2.get('n') != ph['a']:
+                            return None
+                        new2['n'] = ph['b']
+                        then = [new2]
+                    steps.append({'op': 'if', 'c': c, 'then': then, 'else': [prev]})
+                    continue
                 _resolve_prev(sub, steps)
                 if els is not None and not alt:
                     steps.append({'op': 'if', 'c': c, 'then': sub, 'else': els})
@@ -1762,12 +2021,25 @@ def _parse_seq(t, steps=None):
                 else:
                     steps.append({'op': 'if', 'c': c, 'then': sub})
                 continue
+        if t.startswith('その中') and steps and steps[-1].get('op') == 'if' and steps[-1].get('then') and steps[-1]['then'][-1].get('op') == 'look' and steps[-1]['then'][-1].get('k') == 0 and not steps[-1].get('else'):
+            j = t.find('。')
+            seg = t if j < 0 else t[:j]
+            prev = steps[-1]['then'][-1]
+            r = parse_effects(f'あなたの山札を上から{prev["n"]}枚見て、' + seg)
+            if r and r[0].get('op') == 'look':
+                if prev.get('per'):
+                    r[0]['per'] = prev['per']
+                steps[-1]['then'][-1:] = r
+                t = '' if j < 0 else t[j + 1:]
+                continue
         if t.startswith('その中') and steps and steps[-1].get('op') == 'look' and steps[-1].get('k') == 0:
             j = t.find('。')
             seg = t if j < 0 else t[:j]
             prev = steps[-1]
             r = parse_effects(f'あなたの山札を上から{prev["n"]}枚見て、' + seg)
             if r and r[0].get('op') == 'look':
+                if prev.get('per'):
+                    r[0]['per'] = prev['per']
                 steps[-1:] = r
                 t = '' if j < 0 else t[j + 1:]
                 continue
@@ -2082,6 +2354,9 @@ def parse_cost(t, skill):
     C = [
         (r'【スキル】(?:を)?発動(?:する|すること)?', lambda m: skill),
         (r'あなたのライフの先頭をドロップする', lambda m: [{'op': 'lifeDrop', 'n': 1}]),
+        (r'あなたのレストしているエナジーから、(?P<l>(?:[黒青白赤]\d+枚、?)+)をスタンドする', lambda m: [{'op': 'standEnergyColors', 'colors': {{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c]: int(n) for c, n in re.findall(r'([黒青白赤])(\d+)枚', m.group('l'))}}]),
+        (r'レストしているこのユニットをテリトリーゾーンに置く', lambda m: [{'op': 'toTerrZone'}]),
+        (r'あなたの「(?P<nm>[^」]+)」を含むユニットを(?P<n>\d+)枚山札の下に置く', lambda m: [{'op': 'tgt', 'f': {'side': 'own', 'type': 'unit', 'name': m.group('nm')}, 'n': int(m.group('n')), 'upto': 0}, {'op': 'deckBottom', 'to': 'T'}]),
         (r'あなたのエナジー(?:の中)?から、(?P<l>(?:[黒青白赤]\d+枚、?)+)(?:を)?(?P<h>レスト|ドロップ)する', lambda m: [{'op': 'payEnergyMulti', 'colors': {{'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[c]: int(n) for c, n in re.findall(r'([黒青白赤])(\d+)枚', m.group('l'))}, 'how': 'rest' if m.group('h') == 'レスト' else 'drop'}]),
         (r'あなたの(?P<c>赤|青|白|黒)のエナジー(?:を)?(?P<n>\d+)枚(?:を)?ドロップする', lambda m: [{'op': 'payEnergy', 'n': int(m.group('n')), 'color': {'赤': 'red', '青': 'blue', '白': 'white', '黒': 'black'}[m.group('c')], 'how': 'drop'}]),
         (r'あなたの白と赤のエナジーをそれぞれ1枚ずつドロップ(?:する|してよい)', lambda m: [{'op': 'payEnergyMulti', 'colors': {'white': 1, 'red': 1}, 'how': 'drop'}]),
@@ -2565,13 +2840,16 @@ def parse_card(d):
         if mdis:
             dis = {'k': int(mdis.group('k')) - 1, 'c': parse_cond(mdis.group('c'))}
             ln = mdis.group('h')
-        mall = re.fullmatch(r'(?P<h>.*?)以下を(?:全て)?行う。?', ln)
+        mall = re.fullmatch(r'(?P<h>.*?)(?P<opp>相手は)?(?P<get>(?:そのターン中、)?このユニットは)?以下を(?:全て)?(?:行(?P<may>ってよい|う)|得る)。?', ln)
         if mall and i + 1 < len(lines) and lines[i + 1].startswith('・'):
             j = i + 1
             opts = []
             while j < len(lines) and lines[j].startswith('・'):
-                opts.append(parse_effects_lenient(lines[j][1:]))
+                opts.append(parse_effects_lenient(re.sub(r'^これを得た時、', '', lines[j][1:])))
                 j += 1
+            if all(o is not None for o in opts) and (mall.group('opp') or mall.group('may') == 'ってよい'):
+                flat = sum(opts, [])
+                opts = [[{'op': 'choose', 'who': 'opp' if mall.group('opp') else None, 'opts': [flat, []], 'labels': ['한다', '하지 않는다'], 'text': '아래 효과를 실행할까요?'}]]
             if all(o is not None for o in opts):
                 r = parse_body(mall.group('h') + '__CHOOSE__', d, skill) or parse_body_lenient(mall.group('h') + '__CHOOSE__', d, skill)
                 if r:
