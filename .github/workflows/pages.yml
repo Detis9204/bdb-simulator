@@ -1,0 +1,36 @@
+# main에 올리면 시뮬레이터를 GitHub Pages로 게시
+name: Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 카드 이미지 묶음 만들기
+        run: python collector/build_packs.py
+      - name: 게시 폴더 정리
+        run: |
+          cp simulator/index.html simulator/cards_db.json simulator/peerjs.min.js dist/
+          touch dist/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

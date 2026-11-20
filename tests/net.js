@@ -49,7 +49,7 @@ const clk = (pg, sel) => { const el = pg.d.querySelector(sel); if (el) el.dispat
 (async () => {
   const A = page('host'), B = page('guest');
   await sleep(50);
-  clk(A, '[data-b=mode][data-m=online]'); clk(B, '[data-b=mode][data-m=online]');
+  clk(A, '[data-b=goPlay]'); clk(B, '[data-b=goPlay]'); clk(A, '[data-b=mode][data-m=online]'); clk(B, '[data-b=mode][data-m=online]');
   clk(A, '[data-b=createRoom]'); await sleep(50);
   const code = A.w.eval('Net.code'); console.log('방 코드:', code);
   B.d.getElementById('roomcode').value = code; clk(B, '[data-b=joinRoom]'); await sleep(80);
@@ -92,7 +92,7 @@ const clk = (pg, sel) => { const el = pg.d.querySelector(sel); if (el) el.dispat
         const p=s.active, P=s.players[p];
         if (s.phase==='main') {
           if (!P.energySet && P.hand.length && Math.random()<.8) return {type:'SET_ENERGY',uid:pick(P.hand).uid};
-          const pl=P.hand.filter(c=>Engine.canPay(P,DEFS[c.id]));
+          const pl=P.hand.filter(c=>Engine.canPay(P,DEFS[c.id])&&Engine.playAllowed(s,p,DEFS[c.id]));
           const c=pl.length&&Math.random()<.7?pick(pl):null;
           if (c) { const d=DEFS[c.id], ts=Engine.targetsFor(s,p,d); if (!Engine.needsTarget(d)) return {type:'PLAY',uid:c.uid}; if (ts.length) return {type:'PLAY',uid:c.uid,target:pick(ts)}; }
           return {type:'NEXT_PHASE'};
@@ -112,7 +112,7 @@ const clk = (pg, sel) => { const el = pg.d.querySelector(sel); if (el) el.dispat
   console.log('끝:', A.w.eval('S.winner') != null ? `P${A.w.eval('S.winner') + 1} 승리, ${A.w.eval('S.turnCount')}턴` : '미종료',
     '| 행동 수', A.w.eval('Net.acts.length'), B.w.eval('Net.acts.length'),
     '| 두 기기 상태 일치:', sa === sb, '| 차례 아닌 조작 차단:', blocked);
-  console.log('게스트 화면 아래쪽 매트 = 내 자리(P2):', B.d.querySelector('.mat.me .pname').textContent.startsWith('P2'));
+  console.log('게스트 화면 아래쪽 매트 = 내 자리(P2):', (B.d.querySelector('.hand.me') ? true : false));
   console.log('오류:', A.errs, B.errs, '| 상태 메시지:', A.w.eval('Net.status') || '-', '/', B.w.eval('Net.status') || '-');
   process.exit(0);
 })();

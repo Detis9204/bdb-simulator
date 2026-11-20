@@ -3058,6 +3058,112 @@ function dispatch(a) {
   render();
 }
 
+/* ── claude.ai 밖에서 쓰는 온라인 연결 (PeerJS, 브라우저끼리 직접 연결) ──────────────
+   room 기능과 같은 모양(join → emit/on/presence/onPeers/onConnection/leave)으로 감싸서 Net이 그대로 씀.
+   방장(자리 0)이 'bdbsim-<방 이름>' 주소를 차지하고, 들어오는 사람은 그 주소로 연결함.
+   방장이 메시지를 다른 참가자에게 전달하고 참가자 목록을 모두에게 알려 줌.
+   연결 중개는 PeerJS 공개 서버를 쓰고, 게임 데이터는 브라우저끼리 직접 오감. */
+function loadPeerJs() {
+  if (window.Peer) return Promise.resolve(true);
+  const add = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = () => res(!!window.Peer); sc.onerror = () => res(false); document.head.appendChild(sc); });
+  return add('peerjs.min.js').then(ok => ok || add('https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js'));
+}
+const PeerLobby = {
+  async join(name, opt = {}) {
+    const hostId = 'bdbsim-' + name.replace(/[^a-z0-9-]/gi, '');
+    const handlers = {}, peerFns = [], connFns = [];
+    let peer = null, myId = null, isHost = false, closed = false, connected = false, retry = null;
+    let myPres = {}, hostConn = null;
+    const clients = new Map();            // 방장: peerId → { conn, presence }
+    let list = [];                        // 참가자: 방장이 알려 준 목록 [{peer, presence}]
+    let prevIds = new Set();
+    const setConn = c => { if (connected !== c) { connected = c; connFns.forEach(f => f(c)); } };
+    const snapshot = () => {
+      const raw = isHost ? [{ peer: myId, presence: myPres }, ...[...clients].map(([id, c]) => ({ peer: id, presence: c.presence }))] : list;
+      return raw.map(p => Object.freeze({ peer: p.peer, isMe: p.peer === myId, sameTab: p.peer === myId, kind: 'viewer', guest: false, presence: p.presence || {} }));
+    };
+    const notifyPeers = () => {
+      const peers = snapshot(), ids = new Set(peers.map(p => p.peer));
+      const joined = peers.filter(p => !prevIds.has(p.peer)), left = [...prevIds].filter(x => !ids.has(x)).map(x => ({ peer: x }));
+      prevIds = ids;
+      peerFns.forEach(f => f({ peers, joined, left, updated: peers }));
+    };
+    const deliver = (topic, data, from) => (handlers[topic] || []).forEach(f => { try { f({ topic, data, peer: from, isMe: false, sameTab: false, kind: 'viewer', guest: false }); } catch (e) { console.error(e); } });
+    const send = (conn, m) => { try { if (conn?.open) conn.send(m); } catch {} };
+    const hostBroadcastPeers = () => {
+      const l = [{ peer: myId, presence: myPres }, ...[...clients].map(([id, c]) => ({ peer: id, presence: c.presence }))];
+      clients.forEach(c => send(c.conn, { t: 'peers', list: l }));
+      notifyPeers();
+    };
+    const hostAccept = conn => {
+      conn.on('open', () => { clients.set(conn.peer, { conn, presence: {} }); hostBroadcastPeers(); });
+      conn.on('data', m => {
+        if (!m || typeof m !== 'object') return;
+        const c = clients.get(conn.peer); if (!c) return;
+        if (m.t === 'pres') { c.presence = m.presence || {}; hostBroadcastPeers(); }
+        if (m.t === 'emit') { deliver(m.topic, m.data, conn.peer); clients.forEach((o, id) => { if (id !== conn.peer) send(o.conn, { t: 'msg', topic: m.topic, data: m.data, from: conn.peer }); }); }
+      });
+      const drop = () => { if (clients.get(conn.peer)?.conn === conn) { clients.delete(conn.peer); hostBroadcastPeers(); } };
+      conn.on('close', drop); conn.on('error', drop);
+    };
+    const clientConnect = () => {
+      if (closed || !peer || peer.destroyed) return;
+      clearTimeout(retry);
+      const conn = peer.connect(hostId, { reliable: true });
+      hostConn = conn;
+      conn.on('open', () => { setConn(true); send(conn, { t: 'pres', presence: myPres }); });
+      conn.on('data', m => {
+        if (!m || typeof m !== 'object') return;
+        if (m.t === 'peers') { list = m.list || []; notifyPeers(); }
+        if (m.t === 'msg') deliver(m.topic, m.data, m.from);
+      });
+      const lost = () => { if (hostConn !== conn) return; hostConn = null; setConn(false); list = list.filter(p => p.peer === myId); notifyPeers(); if (!closed) retry = setTimeout(clientConnect, 2500); };
+      conn.on('close', lost); conn.on('error', lost);
+    };
+    await new Promise((resolve, reject) => {
+      let tries = 0, settled = false;
+      const start = () => {
+        isHost = !!opt.host;
+        peer = isHost ? new Peer(hostId) : new Peer();
+        peer.on('open', id => {
+          myId = id;
+          if (isHost) { setConn(true); notifyPeers(); } else clientConnect();
+          if (!settled) { settled = true; resolve(); }
+        });
+        if (isHost) peer.on('connection', hostAccept);
+        peer.on('disconnected', () => { if (!closed && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch {} }, 1500); });
+        peer.on('error', e => {
+          const t = e?.type;
+          if (t === 'unavailable-id' && isHost && !settled && tries++ < 8) { peer.destroy(); return setTimeout(start, 2000); }   // 새로고침 직후 이전 주소가 아직 남아 있음
+          if (t === 'peer-unavailable' && !isHost) { setConn(false); clearTimeout(retry); if (!closed) retry = setTimeout(clientConnect, 2500); return; }
+          if (!settled && ['browser-incompatible', 'unavailable-id', 'invalid-id', 'ssl-unavailable', 'server-error', 'socket-error', 'network'].includes(t)) {
+            settled = true; reject(Object.assign(new Error(t === 'unavailable-id' ? '같은 방 코드를 이미 다른 방장이 쓰고 있어요' : '연결 서버에 닿지 못했어요 (' + t + ')'), { code: t }));
+          }
+          if (['network', 'server-error', 'socket-error'].includes(t)) setConn(false);
+        });
+      };
+      start();
+    });
+    return {
+      name,
+      async emit(topic, data) {
+        if (isHost) clients.forEach(c => send(c.conn, { t: 'msg', topic, data, from: myId }));
+        else send(hostConn, { t: 'emit', topic, data });
+      },
+      on(topic, fn) { (handlers[topic] ||= []).push(fn); return () => { handlers[topic] = handlers[topic].filter(f => f !== fn); }; },
+      async presence(patch) {
+        myPres = { ...myPres, ...patch };
+        if (isHost) hostBroadcastPeers(); else send(hostConn, { t: 'pres', presence: myPres });
+      },
+      peers: snapshot,
+      onPeers(fn) { peerFns.push(fn); setTimeout(() => fn({ peers: snapshot(), joined: snapshot(), left: [], updated: [] }), 1); return () => {}; },
+      connected: () => connected,
+      onConnection(fn) { connFns.push(fn); setTimeout(() => fn(connected), 1); return () => {}; },
+      async leave() { closed = true; clearTimeout(retry); try { peer?.destroy(); } catch {} },
+    };
+  },
+};
+
 /* ── 온라인 대전 (room 기능) ──────────────────────────────
    메시지는 4KB까지라 게임 상태 전체를 보내지 않고, 시드와 행동만 주고받음.
    두 기기가 같은 시드에서 같은 행동을 같은 순서로 적용하면 같은 게임이 됨.
@@ -3067,6 +3173,7 @@ const Net = {
   gid: null, setup: null, acts: [], buffer: {}, lastNeed: 0, status: '',
   async init() {
     try { this.lobby = window.claude ? await window.claude.use('room') : null; } catch { this.lobby = null; }
+    if (!this.lobby) { this.peerMode = true; if (await loadPeerJs()) this.lobby = PeerLobby; }
     render();
   },
   save() {
@@ -3078,8 +3185,9 @@ const Net = {
   async join(code, seat) {
     if (!this.lobby) return;
     this.status = '방에 들어가는 중…'; render();
-    try { this.room = await this.lobby.join('bdb-' + code); }
-    catch (e) { this.status = '방에 들어가지 못했어요: ' + (e.code || e.message); return render(); }
+    const saved0 = this.load(code);
+    try { this.room = await this.lobby.join('bdb-' + code, { host: (saved0 ? saved0.seat : seat) === 0 }); }
+    catch (e) { this.status = '방에 들어가지 못했어요: ' + (this.peerMode ? e.message : (e.code || e.message)); return render(); }
     this.code = code; this.status = '';
     const saved = this.load(code);
     this.seat = saved ? saved.seat : seat;
@@ -3215,8 +3323,9 @@ function lobbyHTML() {
       <div class="decks2">${deckPicker(0, 'P1 덱')}${deckPicker(1, 'P2 덱')}</div>
       <div class="startrow"><button class="go big" data-b="startLocal">게임 시작</button></div>`;
   } else if (!Net.lobby) {
-    body = `<p class="lead">온라인 대전은 claude.ai에 게시된 이 페이지에서만 쓸 수 있어요. 지금 화면에서는 연결할 수 없어요.</p>
-      <p class="hint">PC에서 직접 연 파일이라면 게시된 페이지 링크로 열어 주세요. 함께할 친구는 claude.ai에 로그인하고, 이 페이지에 참여자 이상 권한으로 초대받아야 해요.</p>`;
+    body = Net.peerMode
+      ? `<p class="lead">온라인 연결 도구를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.</p>`
+      : `<p class="lead">온라인 연결을 준비하는 중이에요.</p>`;
   } else if (!Net.code) {
     body = `<p class="lead">방을 만들고 방 코드를 친구에게 알려 주세요. 친구는 같은 페이지에서 코드를 입력해 들어와요.</p>
       <div class="roomrow"><button class="go" data-b="createRoom">방 만들기</button>
