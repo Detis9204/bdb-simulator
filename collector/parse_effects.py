@@ -1469,7 +1469,8 @@ def parse_cond(t):
          lambda m: (lambda f: f is not None and {'zc': {'side': 'opp' if m.group('w') == '相手' else 'own', 'zone': m.group('z'), 'f': f, 'n': 1, 'cmp': 'ge'}})(_zdesc(m.group('d')))),
         (r'(?P<w>あなた|相手)の(?P<z>ドロップゾーン|リムーブゾーン|手札|エナジーゾーン|フィールド)に(?P<d>[^、。]+?)がない',
          lambda m: (lambda f: f is not None and {'zc': {'side': 'opp' if m.group('w') == '相手' else 'own', 'zone': m.group('z'), 'f': f, 'n': 0, 'cmp': 'le'}})(_zdesc(m.group('d')))),
-        (r'あなたのテリトリーが無い|あなたのテリトリーが開放されていない', lambda m: {'terr': 0}),
+        (r'あなたのテリトリーが(?:無い|ない)', lambda m: {'noTerr': 1}),
+        (r'あなたのテリトリーが開放されていない', lambda m: {'terr': 0}),
         (r'(?P<d>[^、。]*?)' + NOUN + r'がいる', None),
         (r'(?P<d>[^、。]*?)' + NOUN + r'がいない', 'none'),
         (r'あなたの(?:エナジーゾーンに)?(?P<d>[^、。]*?)(?:エースカード|カード|エナジー)が(?:エナジーゾーンに)?ある', 'zone'),
@@ -3409,7 +3410,7 @@ def parse_card(d):
         m = re.fullmatch(r'⁅永(?:続)?⁆あなたの、?(?P<d>[^。]+?)ユニットがアタックしてバトルする際、手札からこのカードをドロップすることで、そのユニットを【ブライト(?P<n>\d+)】させる。?', ln)
         if m and parse_desc(m.group('d')) is not None:
             d['handTrig'] = 1
-            abs_.append({'k': 'auto', 'on': 'battle', 'src': 'own', 'if': [{'evF': dict(parse_desc(m.group('d')), attacking=1)}], 'cost': [{'op': 'discardSelf', 'inCost': 1}],
+            abs_.append({'k': 'auto', 'fromHand': 1, 'on': 'battle', 'src': 'own', 'if': [{'evF': dict(parse_desc(m.group('d')), attacking=1)}], 'cost': [{'op': 'discardSelf', 'inCost': 1}],
                          'do': [{'op': 'brightBoost', 'n': int(m.group('n')), 'to': 'evt'}], 'li': [i]})
             done.add(i); i += 1; continue
         if re.fullmatch(r'⁅永続⁆このユニットの【ブライト】はこのユニットが登場した時にも発動できる。?', ln):
@@ -3553,8 +3554,14 @@ def parse_card(d):
         d['mt'] = mts
     elif 'mt' in d:
         del d['mt']
-    if any('手札からこのカードを登場' in (lines[i] if i < len(lines) else '') for a in abs_ if a.get('k') == 'auto' for i in a.get('li', [])):
-        d['handTrig'] = 1
+    for a in abs_:
+        if a.get('k') != 'auto':
+            continue
+        txt = ''.join(lines[i] for i in a.get('li', []) if i < len(lines))
+        if '手札からこのカードを登場' in txt or ('手札からこのカードをドロップすることで' in txt and a.get('on') == 'battle'):
+            a['fromHand'] = 1; d['handTrig'] = 1
+        if 'エナジーのこのカード' in txt and a.get('on') not in ('skillDrop',) and a.get('src') != 'self':
+            a['fromEnergy'] = 1; d['energyTrig'] = 1
     return abs_, done
 
 
