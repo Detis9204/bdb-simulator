@@ -501,6 +501,7 @@ details.rules li{margin:3px 0}
 .fxsrc{font-size:12px;opacity:.85;margin:4px 0 6px;padding:6px 8px;border-left:3px solid var(--pink);background:#ffffff0d;border-radius:4px;white-space:normal}
 .prompt .opts{display:flex;flex-direction:column;gap:6px;width:100%}
 .prompt .opts .opt{text-align:left;white-space:normal}
+.ordopt{display:flex;flex-direction:column;gap:3px;align-items:flex-start}.ordopt b{font-family:var(--jp)}.ordopt small{font-size:12px;color:var(--ink-dim);line-height:1.45}
 .card.dim{opacity:.4}
 .autotag{display:inline-block;font-size:10.5px;padding:0 6px;border-radius:8px;margin-left:4px;vertical-align:1px;white-space:nowrap}
 .autotag.auto{background:#2f7d5a;color:#fff}.autotag.man{background:#6b5b2a;color:#fff}.autotag.part{background:#3f5f8a;color:#fff}.autotag.sel{background:#2f6d7d;color:#fff}
@@ -665,11 +666,58 @@ details.rules li{margin:3px 0}
   .sheet .split{display:flex;flex-direction:column;overflow:auto}
   .sheet .split .side-d{padding:0 12px 14px;overflow:visible}
 }
+
+/* ── 연출 ── */
+#fxlayer{position:fixed;inset:0;pointer-events:none;z-index:25;overflow:hidden}
+#fxshield{position:fixed;inset:0;z-index:24;cursor:pointer;background:transparent}
+#fxshield span{position:fixed;right:12px;bottom:12px;font-size:11.5px;color:var(--ink-dim);background:#0b0918b0;padding:3px 9px;border-radius:8px}
+#fxshield[hidden]{display:none}
+.fx{position:fixed;box-sizing:border-box}
+.fx.banner{left:50%;top:42%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 26px;border-radius:16px;
+  background:#1a1733ee;border:1px solid #6a5fc0;box-shadow:0 10px 40px #000a;color:var(--ink);text-align:center;animation:fxBan 1s ease-out forwards;white-space:nowrap}
+.fx.banner b{font-size:24px;font-family:var(--num);font-weight:400;letter-spacing:.04em}
+.fx.banner small{font-size:13px;color:var(--ink-dim)}
+.fx.banner.big b{font-size:40px;background:linear-gradient(90deg,var(--pink),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.fx.banner.win{animation-duration:2.2s}
+.fx.banner.atk{border-color:var(--pink)} .fx.banner.atk b{color:var(--pink)}
+.fx.banner.blk{border-color:var(--cyan)} .fx.banner.blk b{color:var(--cyan)}
+.fx.banner.trig{flex-direction:row;gap:12px;top:16%;padding:8px 18px 8px 10px;border-color:#2f9d70;text-align:left}
+.fx.banner.trig span{display:flex;flex-direction:column;gap:2px}.fx.banner.trig b{font-family:var(--jp);font-size:16px;font-weight:700}
+.fx.banner.cardb{background:transparent;border:0;box-shadow:none}
+.fx .fxcard .card{--cw:170px;--ch:238px;width:170px;height:238px;box-shadow:0 10px 40px #000c}
+.fx .fxmini .card{--cw:54px;--ch:76px;width:54px;height:76px}
+.fx.banner.battle .vs{display:flex;align-items:center;gap:12px}
+.fx.banner.battle .fxmini .card{--cw:72px;--ch:101px;width:72px;height:101px}
+.fx.banner.battle i{font-style:normal;font-family:var(--num);font-size:30px;color:var(--yellow)}
+.fx.banner.battle b{font-size:26px}
+.fx.ring{border-radius:10px;animation:fxRing .8s ease-out forwards}
+.fx.ring.enter{box-shadow:0 0 0 3px #ffe27a,0 0 24px 6px #ffe27a99}
+.fx.ring.trig{box-shadow:0 0 0 3px #4fe3a8,0 0 24px 6px #4fe3a888}
+.fx.ring.blk{box-shadow:0 0 0 3px var(--cyan),0 0 24px 6px #5fd8ff88}
+.fx.ring.target{box-shadow:0 0 0 3px var(--pink),0 0 26px 8px #ff5fa888}
+.fx.ghost{display:flex;align-items:center;justify-content:center}
+.fx.ghost .card{height:100%;width:auto;aspect-ratio:5/7;max-width:100%;--ch:100%}
+.fx.ghost.lunge{animation:fxLunge .7s ease-in-out forwards;z-index:2}
+.fx.ghost.vanish{animation:fxVanish .65s ease-in forwards}
+.fx.shake{border-radius:10px;background:#ff3b5c55;animation:fxShake .4s linear}
+.fx.num{display:flex;align-items:center;justify-content:center;animation:fxNum 1s ease-out forwards}
+.fx.num b{font-family:var(--num);font-weight:400;font-size:26px;color:#fff;text-shadow:0 0 6px #ff2850,0 2px 0 #7a0018}
+@keyframes fxBan{0%{opacity:0;transform:translate(-50%,-50%) scale(.85)}12%{opacity:1;transform:translate(-50%,-50%) scale(1.04)}22%{transform:translate(-50%,-50%) scale(1)}80%{opacity:1}100%{opacity:0;transform:translate(-50%,-56%)}}
+@keyframes fxRing{0%{opacity:0;transform:scale(1.15)}25%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.04)}}
+@keyframes fxLunge{0%{transform:none}45%{transform:translate(var(--dx,0),var(--dy,-40px)) scale(1.08)}60%{transform:translate(calc(var(--dx,0) * .9),calc(var(--dy,-40px) * .9))}100%{transform:none;opacity:0}}
+@keyframes fxVanish{0%{opacity:1;transform:none;filter:none}100%{opacity:0;transform:scale(.6) rotate(-12deg) translateY(20px);filter:grayscale(1) brightness(1.6)}}
+@keyframes fxShake{0%,100%{transform:none}20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
+@keyframes fxNum{0%{opacity:0;transform:translateY(10px) scale(.7)}20%{opacity:1;transform:translateY(-6px) scale(1.15)}100%{opacity:0;transform:translateY(-34px)}}
+.fxbtn{padding:5px 10px;font-size:12.5px}
+@media (prefers-reduced-motion:reduce){.fx{animation-duration:.01s!important}}
+@media (max-width:720px){.fx.banner b{font-size:20px}.fx.banner.big b{font-size:30px}.fx .fxcard .card{--cw:130px;--ch:182px;width:130px;height:182px}.fx.banner{max-width:calc(100vw - 20px);white-space:normal}.fx.banner.battle .fxmini .card{--cw:54px;--ch:76px;width:54px;height:76px}.fx.banner.battle b{font-size:20px}.fxbtn{padding:5px 8px;font-size:12px}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="reveal" aria-live="polite"></div>
+<div id="fxlayer" aria-hidden="true"></div>
+<div id="fxshield" hidden title="누르면 연출 건너뛰기"><span>누르면 건너뛰기</span></div>
 <script>
 "use strict";
 /* =====================================================================
@@ -873,6 +921,8 @@ const Engine = (() => {
     return a;
   }
   function log(s, m, cls) { s.log.push(cls ? { m, cls } : { m }); }
+  /** 연출용 사건 기록 (화면이 순서대로 보여 줌). 게임 진행에는 쓰지 않음 */
+  function fxe(s, ev) { s.fxSeq = (s.fxSeq || 0) + 1; (s.fx ||= []).push({ n: s.fxSeq, ...ev }); if (s.fx.length > 80) s.fx.splice(0, s.fx.length - 80); }
 
   function validateDeck(deck) {
     const list = deck.main, errs = [];
@@ -1157,6 +1207,7 @@ const Engine = (() => {
     if (s.winner != null) return;
     s.winner = 1 - p; s.phase = 'over'; s.pending = null; s.dmg = null; s.queue = []; s.conts = [];
     log(s, `${s.players[p].name} 패배 (${why}) — ${s.players[1 - p].name} 승리!`, 'turn');
+    fxe(s, { k: 'win', p: 1 - p });
   }
   function drawCard(s, p) {
     const P = s.players[p];
@@ -1183,6 +1234,7 @@ const Engine = (() => {
   /** 유닛을 필드에서 뺌. 붙어 있던 카드(つける)는 드롭 존으로 */
   function offField(s, u) {
     s.field.splice(s.field.indexOf(u), 1);
+    fxe(s, { k: 'gone', u: u.uid, id: u.id, p: u.owner });
     for (const a of u.att || []) {
       s.players[u.owner].drop.push({ uid: a.uid, id: a.id });
       log(s, `${s.players[u.owner].name}: 붙어 있던 ${name(a)} → 드롭 존`);
@@ -1199,6 +1251,7 @@ const Engine = (() => {
     if (restrictOf(s, p, 'secondUnitDrop').length && s.turn.enteredBy.filter(x => x.p === p).length >= 2) s.queue.push({ t: 'ab', p, src: c.uid, id: c.id, ai: -1, ctx: { p, src: c.uid, id: c.id, T: [] }, steps: [{ op: 'drop', to: 'self' }], i: 0 });
     if (opt.rested || permMods(s, u).kw.includes('enterRested') || restrictOf(s, p, 'enterRested').some(r => defMatches(DEFS[c.id], r.f))) u.rested = true;
     log(s, `${s.players[p].name}: ${name(c)} ${opt.cos ? '코스프레로 ' : ''}등장${opt.rested ? ' (레스트)' : ''}`);
+    fxe(s, { k: 'enter', u: u.uid, id: c.id, p });
     const d = DEFS[c.id], T = s.players[p].territory;
     s.turn.enteredAttrs.push(...d.attr); s.turn.enteredUids.push(u.uid);
     if (d.sub === 'ace') s.turn.aceEntered[p] = true;
@@ -1310,8 +1363,12 @@ const Engine = (() => {
     if (e.power) u.tmp.power += e.power;
     if (e.hit) u.tmp.hit += e.hit;
   }
+  /** 고를 의미가 없는 묶음: 모두 같은 카드(이름과 능력이 같은 판 포함)의 같은 능력 */
+  const abKey = h => h.steps ? null : DEFS[h.id].name + '|' + JSON.stringify((DEFS[h.id].ab || [])[h.ai] || null);
+  const sameAbs = g => g.every(h => h.t === g[0].t && abKey(h) !== null && abKey(h) === abKey(g[0]));
   function resolveQueue(s, q) {
     if (q.t === 'icon') return resolveIcon(s, q);
+    if (q.t === 'order') { s.pending = { type: 'order', player: q.p, items: q.items }; return; }
     if (q.t === 'ab') return runAb(s, q);
     if (q.t === 'cos') return runCos(s, q);
     if (q.t === 'dress') {   // 神衣: 플레이한 鮮血·純潔 등을 유닛에 겹쳐 입힘 (임의)
@@ -1402,6 +1459,7 @@ const Engine = (() => {
     s.turn.dropStart = s.players.map(Q => Q.drop.map(c => c.uid));
     const P = s.players[s.active];
     log(s, `${s.turnCount}턴 — ${P.name}`, 'turn');
+    fxe(s, { k: 'turn', p: s.active, t: s.turnCount });
     s.phase = 'stand';
     for (const u of unitsOf(s, s.active)) { if (hasKw(s, u, 'noStand')) continue; if (u.frozen) { u.frozen = 0; log(s, `${name(u)}은(는) 이번 스탠드 페이즈에 스탠드하지 않음`); } else u.rested = false; }
     for (const e of P.energy) e.rested = false;
@@ -1452,6 +1510,7 @@ const Engine = (() => {
   function startBattle(s, a, b) {
     const A = findUnit(s, a), B = findUnit(s, b);
     log(s, `배틀: ${name(A)}(${power(s, A)}) ↔ ${name(B)}(${power(s, B)})`);
+    fxe(s, { k: 'battle', a, b, ia: A.id, ib: B.id, pa: power(s, A), pb: power(s, B) });
     s.battle = { a, b };
     s.conts.push({ k: 'battle', a, b });
     // 배틀 시 자동 능력: 턴 플레이어 쪽 먼저 (1304-2a)
@@ -1472,6 +1531,7 @@ const Engine = (() => {
     if (hasKw(s, from, 'dmgToEnergy')) to.toEnergyTurn = s.turnCount;
     if (hasKw(s, to, 'dmgDouble')) n *= 2;
     to.damage += n;
+    if (n > 0) fxe(s, { k: 'dmg', u: to.uid, n });
     if (n > 0 && hasKw(s, from, 'deathtouch')) { to.dtKill = 1; if (hasKw(s, from, 'deathtouchSilent')) to.dtSilent = 1; }
   }
   function battleDamage(s, a, b) {   // 804
@@ -2016,7 +2076,11 @@ const Engine = (() => {
       hits.push({ t: 'ab', p: u.owner, src: u.uid, id: g.id, ai: g.ai, ctx, steps: structuredClone(a.do), i: 0 });
     }
     hits.sort((a, b) => (b.p === s.active) - (a.p === s.active));   // 턴 플레이어 쪽 먼저 (1304-2a)
-    s.queue.push(...hits);
+    // 같은 때 발동한 같은 플레이어의 자동 능력이 2개 이상이면 그 플레이어가 처리 순서를 고름 (1304-2b)
+    for (const p of [s.active, 1 - s.active]) {
+      const g = hits.filter(h => h.p === p);
+      if (g.length >= 2 && !sameAbs(g)) s.queue.push({ t: 'order', p, items: g }); else s.queue.push(...g);
+    }
   }
   const abLine = (q) => { const d = DEFS[q.id], a = (d.ab || [])[q.ai] || {}; const i = a.li?.[0] ?? 0;
     const t = d.type === 'territory' ? (d.tfx?.ko || d.tfx?.text || '') : (d.ko?.[i] || d.text?.[i] || ''); return t; };
@@ -2047,6 +2111,7 @@ const Engine = (() => {
     const d = DEFS[q.id], a = (d.ab || [])[q.ai];
     if (!q.steps) {
       log(s, `[${a.k === 'play' ? '커맨드' : a.k === 'auto' ? '자동' : '효과'}] ${d.name}`, 'trg');
+      if (a.k !== 'play') fxe(s, { k: 'trig', u: q.src, id: q.id, p: q.p, kind: a.k === 'auto' ? '자동 능력' : '효과' });
       q.steps = [];
       if (a.cost && (s.turn.flags || {}).freeSkill === q.p + 1) { s.turn.flags.freeSkill = 0; log(s, `${d.name}: 스킬 코스트를 내지 않고 발동`); }
       else if (a.cost && hasRule(s, q.p, 'skillAltCmd') && s.active === q.p && s.players[q.p].hand.some(c => DEFS[c.id].type === 'command') && a.cost.some(x => x.inCost)) {
@@ -2477,7 +2542,7 @@ const Engine = (() => {
         const k = Zf.findIndex(c => c.uid === st.uid); if (k < 0) return 'ok';
         const c = Zf.splice(k, 1)[0], d = st.d;
         if (d.type === 'unit') { hist(s, 'play', { p, id: c.id, u: c.uid, how: 'alt' }); enterUnit(s, c, p, true, { played: true, rested: !!st.rested }); (s.turn.playedN ||= {})[p] = ((s.turn.playedN || {})[p] || 0) + 1; }
-        else { log(s, `${P.name}: ${d.name} 플레이`); resolveFx(s, p, d, st.target); P.drop.push(c); queuePlay(s, c, p, { fromHand: true }); }
+        else { log(s, `${P.name}: ${d.name} 플레이`); fxe(s, { k: 'play', id: c.id, p }); resolveFx(s, p, d, st.target); P.drop.push(c); queuePlay(s, c, p, { fromHand: true }); }
         return 'ok';
       }
       case 'summonHandUid': { const c = P.hand.find(x => x.uid === st.uid); if (c) { P.hand.splice(P.hand.indexOf(c), 1); enterUnit(s, c, p, false, {}); } return 'ok'; }
@@ -2892,10 +2957,19 @@ const Engine = (() => {
       fire(s, 'rest', { uid: u.uid, p: s.active });
       const tName = a.target === 'player' ? s.players[1 - s.active].name : name(findUnit(s, a.target));
       log(s, `${name(u)}(${power(s, u)}) → ${tName} 공격`);
+      fxe(s, { k: 'atk', u: u.uid, id: u.id, p: s.active, t: a.target });
       s.attacking = a.attacker; (s.turn.attackedP ||= {})[s.active] = 1; (s.turn.atkU ||= {})[a.attacker] = 1;
       hist(s, 'atk', { p: s.active, u: a.attacker, id: u.id, target: a.target });
       s.conts.push({ k: 'attackEnd', uid: a.attacker, p: s.active }, { k: 'blockStep', attacker: a.attacker, target: a.target });
       fire(s, 'attack', { uid: a.attacker, p: s.active });
+    },
+    ORDER(s, a) {
+      const pd = requirePending(s, 'order');
+      const i = a.i | 0; if (i < 0 || i >= pd.items.length) fail('고를 수 없는 효과입니다');
+      const item = pd.items[i], rest = pd.items.filter((_, k) => k !== i);
+      s.pending = null;
+      log(s, `${s.players[pd.player].name}: ${DEFS[item.id].name}의 효과부터 처리`);
+      s.queue.unshift(item, ...(rest.length >= 2 && !sameAbs(rest) ? [{ t: 'order', p: pd.player, items: rest }] : rest));
     },
     BLOCK(s, a) {
       const pd = requirePending(s, 'block');
@@ -2903,7 +2977,7 @@ const Engine = (() => {
         const b = findUnit(s, a.blocker);
         if (!b || b.owner !== pd.player || (b.rested && !hasKw(s, b, 'blockRested')) || b.uid === pd.target) fail('스탠드 상태인 자기 유닛만 블록할 수 있습니다');
         if (hasKw(s, b, 'noBlock')) fail('이 유닛은 블록할 수 없습니다');
-        b.rested = true; log(s, `${name(b)}이(가) 블록`); hist(s, 'blk', { p: b.owner, u: b.uid, id: b.id, vs: pd.attacker }); fire(s, 'block', { uid: b.uid, p: b.owner });
+        b.rested = true; log(s, `${name(b)}이(가) 블록`); fxe(s, { k: 'blk', u: b.uid, id: b.id, p: b.owner }); hist(s, 'blk', { p: b.owner, u: b.uid, id: b.id, vs: pd.attacker }); fire(s, 'block', { uid: b.uid, p: b.owner });
       } else if (blockRequired(s, pd)) {
         fail('이번 턴은 할 수 있는 한 블록해야 합니다');
       } else log(s, `${s.players[pd.player].name}: 블록하지 않음`);
@@ -3149,7 +3223,7 @@ const deckRef = k => DECKS[k]?.mine ? { label: DECKS[k].label, territory: DECKS[
 const deckIds = x => { const d = resolveDeck(x); return d ? [d.territory, ...d.main.map(m => m[0])] : []; };
 const deckKnown = x => { const d = resolveDeck(x); return !!d && Array.isArray(d.main) && deckIds(d).every(id => DEFS[id]); };
 function beginGame(deckKeys, seed) {
-  Reveal.reset();
+  Reveal.reset(); Fx.reset(); Fx.seen = 0;
   const dA = resolveDeck(deckKeys[0]), dB = resolveDeck(deckKeys[1]);
   const errs = [...Engine.validateDeck(dA), ...Engine.validateDeck(dB)];
   S = Engine.newGame(dA, dB, seed);
@@ -3676,7 +3750,7 @@ function promptBar() {
 function promptHTML() {
   const v = controller(), pd = S.pending, P = S.players[v];
   if (S.winner == null && !myControl()) {
-    const what = pd ? { mulligan: '첫 패를 정하는', block: '블록할지 정하는', shot: '샷 트리거를 쓸지 정하는', territory: '테리토리를 개방할지 정하는', bright: '브라이트할지 정하는', scout: '스카웃하는', seika: '카드를 고르는', flashback: '등장시킬 카드를 고르는', discard: '버릴 카드를 고르는', fx: '카드 효과를 처리하는', manual: '카드 효과를 직접 처리하는', cosplay: '코스프레할지 정하는', dress: '입힐 유닛을 고르는', setPlay: '뒷면 카드를 플레이할지 정하는' }[pd.type] || '선택하는' : '턴을 진행하는';
+    const what = pd ? { order: '효과 처리 순서를 정하는', mulligan: '첫 패를 정하는', block: '블록할지 정하는', shot: '샷 트리거를 쓸지 정하는', territory: '테리토리를 개방할지 정하는', bright: '브라이트할지 정하는', scout: '스카웃하는', seika: '카드를 고르는', flashback: '등장시킬 카드를 고르는', discard: '버릴 카드를 고르는', fx: '카드 효과를 처리하는', manual: '카드 효과를 직접 처리하는', cosplay: '코스프레할지 정하는', dress: '입힐 유닛을 고르는', setPlay: '뒷면 카드를 플레이할지 정하는' }[pd.type] || '선택하는' : '턴을 진행하는';
     return `<div class="prompt"><div class="msg">${P.name}이(가) ${what} 중이에요. 기다려 주세요.</div></div>`;
   }
   const pickCards = (cs, p) => `<div class="cards">${cs.map(c => cardHTML(DEFS[c.id], { cls: 'tg', uid: c.uid, attrs: clickAttrs('pick', p, c.uid) })).join('')}</div>`;
@@ -3685,6 +3759,14 @@ function promptHTML() {
     const msg = ui.tgt.kind === 'attack' ? '공격 대상을 고르세요. 초록 테두리 유닛을 누르거나 상대 플레이어를 공격하세요.' : '효과 대상을 고르세요. 초록 테두리 유닛을 누르세요.';
     const canPlayer = ui.tgt.kind === 'attack' && Engine.attackTargets(S, S.active, ui.tgt.uid).includes('player');
     return `<div class="prompt"><div class="msg">${msg}</div>${canPlayer ? '<button class="go" data-b="atkPlayer">상대 플레이어 공격</button>' : ''}<button data-b="cancel">취소</button></div>`;
+  }
+  if (pd?.type === 'order') {
+    const opts = pd.items.map((it, i) => {
+      const d = DEFS[it.id], a = (d.ab || [])[it.ai] || {}, li = a.li?.[0] ?? 0;
+      const t = d.type === 'territory' ? (d.tfx?.ko || d.tfx?.text || '') : ((LANG === 'ja' ? d.text?.[li] : d.ko?.[li]) || d.text?.[li] || '');
+      return `<button class="opt ordopt" data-b="order" data-i="${i}"><b>${esc(d.name)}</b><small>${esc(t)}</small></button>`;
+    }).join('');
+    return `<div class="prompt"><div class="msg"><b>${P.name}</b>, 같은 때 발동한 효과가 ${pd.items.length}개 있어요. 먼저 처리할 효과를 고르세요.</div><div class="opts">${opts}</div></div>`;
   }
   if (pd?.type === 'mulligan') return `<div class="prompt"><div class="msg"><b>${P.name}</b>, 첫 패 5장입니다. 마음에 들지 않으면 한 번만 다시 뽑을 수 있어요.</div><button class="go" data-b="keep">이대로 시작</button><button data-b="redraw">다시 뽑기</button></div>`;
   if (pd?.type === 'block') {
@@ -3982,6 +4064,7 @@ function render() {
   if (screen === 'builder') { document.getElementById('app').innerHTML = builderHTML(); return; }
   if (screen === 'home') { document.getElementById('app').innerHTML = homeHTML(); return; }
   if (screen === 'lobby' || !S) { document.getElementById('app').innerHTML = lobbyHTML(); return; }
+  Fx.capture();
   const v = viewerSeat(), o = 1 - v;
   const who = S.players[controller()].name;
   document.getElementById('app').innerHTML = `
@@ -3989,6 +4072,7 @@ function render() {
     <span class="turnno">${S.turnCount || 0}<small>${S.turnCount ? '턴' : '게임 준비'}</small></span>
     <span>${online() ? (myControl() ? '<span class="who">내 차례</span>' : `${who} 진행 중`) : `지금 조작: <span class="who">${who}</span>`}</span>
     <span class="spacer"></span>
+    <button class="fxbtn" data-b="fxMode" title="연출 빠르기">연출 ${{ normal: '보통', fast: '빠르게', off: '끔' }[Fx.mode]}</button><button class="fxbtn" data-b="sfx" aria-pressed="${Sfx.on}">소리 ${Sfx.on ? '켬' : '끔'}</button>
     ${online() ? `<span class="roomtag">방 ${esc(Net.code)}, 나는 ${Net.seat === 0 ? 'P1' : Net.seat === 1 ? 'P2' : '관전'}${Net.connected ? '' : ', 연결 끊김'}</span>${Net.status ? `<span class="warn">${esc(Net.status)}</span>` : ''}<button data-b="leaveRoom">방 나가기</button>`
       : `<button data-b="toLobby">덱 다시 고르기</button><button data-b="new">같은 덱으로 새 게임</button>`}
   </div>
@@ -4007,8 +4091,126 @@ function render() {
   ${viewHTML()}
   ${toast ? `<div class="toast" role="status">${esc(toast)}</div>` : ''}`;
   const lg = document.getElementById('log'); if (ui.side === 'log') lg.scrollTop = lg.scrollHeight;
-  Reveal.sync();
+  Fx.sync();
 }
+/* ── 효과음 (WebAudio로 즉석 합성: 파일 없음) ───────────────── */
+const Sfx = {
+  ctx: null, on: (() => { try { return localStorage.getItem('bdb-sfx') !== '0'; } catch { return true; } })(),
+  ensure() {
+    if (!this.ctx) { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    return this.ctx;
+  },
+  tone(f, d, o = {}) {
+    const c = this.ctx, t = c.currentTime + (o.at || 0), g = c.createGain(), os = c.createOscillator();
+    os.type = o.type || 'sine'; os.frequency.setValueAtTime(f, t); if (o.to) os.frequency.exponentialRampToValueAtTime(o.to, t + d);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.vol || .18, t + Math.min(.02, d / 4)); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    os.connect(g).connect(c.destination); os.start(t); os.stop(t + d + .05);
+  },
+  noise(d, o = {}) {
+    const c = this.ctx, t = c.currentTime + (o.at || 0), n = Math.floor(c.sampleRate * d), buf = c.createBuffer(1, n, c.sampleRate), ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = Math.random() * 2 - 1;
+    const src = c.createBufferSource(), fl = c.createBiquadFilter(), g = c.createGain();
+    src.buffer = buf; fl.type = o.hp ? 'highpass' : 'lowpass'; fl.frequency.setValueAtTime(o.f || 1500, t); if (o.to) fl.frequency.exponentialRampToValueAtTime(o.to, t + d);
+    g.gain.setValueAtTime(o.vol || .2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    src.connect(fl).connect(g).connect(c.destination); src.start(t); src.stop(t + d + .05);
+  },
+  play(k) {
+    if (!this.on || !this.ensure()) return;
+    try {
+      switch (k) {
+        case 'turn': this.tone(523, .5, { type: 'triangle', vol: .14 }); this.tone(784, .7, { type: 'triangle', vol: .12, at: .12 }); break;
+        case 'play': this.noise(.25, { f: 500, to: 4000, vol: .12 }); this.tone(660, .25, { vol: .1, at: .08 }); break;
+        case 'enter': [523, 659, 784].forEach((f, i) => this.tone(f, .18, { type: 'triangle', vol: .12, at: i * .06 })); break;
+        case 'trig': this.tone(988, .22, { vol: .1 }); this.tone(1319, .35, { vol: .09, at: .09 }); break;
+        case 'atk': this.noise(.3, { f: 300, to: 3500, vol: .2 }); this.tone(220, .25, { type: 'sawtooth', vol: .06, to: 440 }); break;
+        case 'blk': this.tone(330, .2, { type: 'square', vol: .08 }); this.noise(.15, { f: 2500, hp: 1, vol: .12 }); break;
+        case 'clash': this.noise(.35, { f: 3000, to: 400, vol: .25 }); this.tone(150, .3, { type: 'square', vol: .1, to: 70 }); this.tone(1200, .15, { vol: .07, at: .02 }); break;
+        case 'hit': this.tone(140, .18, { type: 'sine', vol: .25, to: 60 }); this.noise(.1, { f: 900, vol: .15 }); break;
+        case 'break': this.noise(.45, { f: 4000, to: 300, vol: .18 }); this.tone(400, .35, { type: 'triangle', vol: .08, to: 120 }); break;
+        case 'buster': this.tone(110, .4, { type: 'sawtooth', vol: .12, to: 55 }); this.noise(.4, { f: 1200, vol: .2 }); break;
+        case 'shot': [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, .16, { type: 'triangle', vol: .1, at: i * .05 })); break;
+        case 'life': this.tone(200, .2, { type: 'sine', vol: .2, to: 90 }); break;
+        case 'win': [523, 659, 784, 1047].forEach((f, i) => this.tone(f, .45, { type: 'triangle', vol: .13, at: i * .13 })); break;
+      }
+    } catch {}
+  },
+};
+if (typeof document !== 'undefined') document.addEventListener('pointerdown', () => { if (Sfx.on) Sfx.ensure(); }, { capture: true, passive: true });
+
+/* ── 연출: 엔진이 남긴 사건(S.fx)을 순서대로 보여 줌 ─────────────
+   공격·배틀·데미지·파괴·등장·능력 발동을 한 박자씩 보여 주고, 그동안 화면을 누르면 건너뜀 */
+const Fx = {
+  seen: 0, q: [], busy: false, timer: null, rects: {},
+  mode: (() => { try { return localStorage.getItem('bdb-fx') || 'normal'; } catch { return 'normal'; } })(),
+  layer() { return document.getElementById('fxlayer'); },
+  capture() {   // 다시 그리기 전에 필드 카드 자리를 기억 (사라진 카드의 연출에 씀)
+    document.querySelectorAll('.ps .card[data-z="field"][data-u]').forEach(el => { this.rects[el.dataset.u] = el.getBoundingClientRect(); });
+  },
+  reset() { clearTimeout(this.timer); this.q = []; this.busy = false; this.rects = {}; const L = this.layer(); if (L) L.innerHTML = ''; this.shield(false); },
+  sync() {
+    if (!S || typeof document === 'undefined') return;
+    if ((S.fxSeq || 0) < this.seen) { this.reset(); this.seen = 0; }
+    const fresh = (S.fx || []).filter(e => e.n > this.seen);
+    this.seen = Math.max(this.seen, S.fxSeq || 0);
+    if (this.mode !== 'off' && fresh.length <= 40) this.q.push(...fresh);   // 다시 접속해 한꺼번에 따라잡을 때는 연출 생략
+    if (!this.busy) this.next();
+  },
+  speed() { const base = this.mode === 'fast' ? .5 : 1; return this.q.length > 10 ? base * .45 : this.q.length > 5 ? base * .7 : base; },
+  next() {
+    clearTimeout(this.timer);
+    const e = this.q.shift();
+    if (!e) { this.busy = false; this.shield(false); Reveal.sync(); return; }
+    this.busy = true; this.shield(true);
+    let d = 0; try { d = this.show(e); } catch (err) { d = 0; }
+    this.timer = setTimeout(() => this.next(), d * this.speed());
+  },
+  skip() { clearTimeout(this.timer); this.q = []; const L = this.layer(); if (L) L.innerHTML = ''; this.busy = false; this.shield(false); Reveal.sync(); },
+  shield(on) { const el = document.getElementById('fxshield'); if (el) el.hidden = !on; },
+  el(uid) { return document.querySelector(`.ps .card[data-z="field"][data-u="${uid}"]`); },
+  rect(uid) { const el = this.el(uid); return el ? el.getBoundingClientRect() : this.rects[uid] || null; },
+  add(html, cls, style = {}, life = 1200) {
+    const L = this.layer(); if (!L) return null;
+    const n = document.createElement('div'); n.className = 'fx ' + cls; n.innerHTML = html; Object.assign(n.style, style);
+    L.appendChild(n); setTimeout(() => n.remove(), life); return n;
+  },
+  at(r, cls, html = '', life = 900) { return r && this.add(html, cls, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' }, life); },
+  banner(html, cls = '', life = 1000) { this.layer()?.querySelectorAll('.fx.banner').forEach(n => n.remove()); return this.add(html, 'banner ' + cls, {}, life); },
+  pname(p) { return S.players[p]?.name || ''; },
+  mini(id) { const d = DEFS[id]; return d ? cardHTML(d, {}) : ''; },
+  show(e) {
+    switch (e.k) {
+      case 'turn': Sfx.play('turn'); this.banner(`<b>${esc(this.pname(e.p))}의 턴</b><small>${e.t}턴</small>`, 'big', 1100); return 950;
+      case 'play': Sfx.play('play'); this.banner(`<div class="fxcard">${this.mini(e.id)}</div><small>${esc(this.pname(e.p))}: 커맨드 플레이</small>`, 'cardb', 1100); return 1000;
+      case 'enter': { Sfx.play('enter'); const r = this.rect(e.u); if (r) this.at(r, 'ring enter', '', 700); else return 0; return 420; }
+      case 'trig': {
+        Sfx.play('trig');
+        const r = this.rect(e.u); if (r) this.at(r, 'ring trig', '', 900);
+        this.banner(`<div class="fxmini">${this.mini(e.id)}</div><span><small>${esc(this.pname(e.p))}, ${esc(e.kind)}</small><b>${esc(DEFS[e.id]?.name || '')}</b></span>`, 'trig', 1000);
+        return 850;
+      }
+      case 'atk': {
+        Sfx.play('atk');
+        const r = this.rect(e.u), tr = e.t === 'player' ? document.querySelector(`.ps[data-mat="${1 - e.p}"]`)?.getBoundingClientRect() : this.rect(e.t);
+        if (r) {
+          const g = this.at(r, 'ghost lunge', this.mini(e.id), 800);
+          if (g && tr) { const dx = (tr.left + tr.width / 2) - (r.left + r.width / 2), dy = (tr.top + tr.height / 2) - (r.top + r.height / 2); g.style.setProperty('--dx', dx * .55 + 'px'); g.style.setProperty('--dy', dy * .55 + 'px'); }
+        }
+        if (tr && e.t !== 'player') this.at(tr, 'ring target', '', 900);
+        this.banner(`<b>공격!</b><small>${esc(DEFS[e.id]?.name || '')} → ${e.t === 'player' ? esc(this.pname(1 - e.p)) : esc(DEFS[(Engine.findUnit(S, e.t) || {}).id]?.name || '유닛')}</small>`, 'atk', 900);
+        return 850;
+      }
+      case 'blk': { Sfx.play('blk'); const r = this.rect(e.u); if (r) this.at(r, 'ring blk', '', 800); this.banner(`<b>블록!</b><small>${esc(DEFS[e.id]?.name || '')}</small>`, 'blk', 800); return 700; }
+      case 'battle': Sfx.play('clash'); this.banner(`<div class="vs"><div class="fxmini">${this.mini(e.ia)}</div><b>${e.pa}</b><i>VS</i><b>${e.pb}</b><div class="fxmini">${this.mini(e.ib)}</div></div>`, 'battle', 1150); return 1100;
+      case 'dmg': { const r = this.rect(e.u); if (!r) return 0; Sfx.play('hit'); this.at(r, 'shake', '', 450); this.at(r, 'num', `<b>-${e.n}</b>`, 1000); return 380; }
+      case 'gone': { const r = this.rects[e.u] || this.rect(e.u); if (!r) return 0; Sfx.play('break'); this.at(r, 'ghost vanish', this.mini(e.id), 700); return 520; }
+      case 'win': Sfx.play('win'); this.banner(`<b>${esc(this.pname(e.p))} 승리!</b>`, 'big win', 2200); return 1800;
+    }
+    return 0;
+  },
+};
+if (typeof document !== 'undefined') document.getElementById('fxshield')?.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); Fx.skip(); });
+
 /* 라이프 데미지로 공개된 카드를 한 장씩 보여 줌 (누르면 다음 장) */
 const Reveal = {
   seen: 0, q: [], timer: null, cur: null,
@@ -4016,6 +4218,7 @@ const Reveal = {
   sync() {
     if (!S) return;
     for (const r of S.reveals || []) if (r.seq > this.seen) { this.q.push(r); this.seen = r.seq; }
+    if (Fx.busy) return;   // 공격·배틀 연출이 끝난 뒤에 보여 줌
     if (!this.cur) this.next();
   },
   next() {
@@ -4025,9 +4228,10 @@ const Reveal = {
     if (!this.cur) { el.innerHTML = ''; return; }
     const r = this.cur, d = DEFS[r.id], P = S.players[r.p];
     const kind = { buster: '버스터! 추가 1 데미지', shot: '샷 트리거!', drop: '드롭 존으로' }[r.kind];
+    Sfx.play(r.kind === 'buster' ? 'buster' : r.kind === 'shot' ? 'shot' : 'life');
     el.innerHTML = `<div class="rv" role="status"><h3>${esc(P.name)} 라이프 데미지 ${r.n}${r.total ? ` / ${r.total}` : ''}</h3>
       ${cardHTML(d, { uid: r.uid })}<div class="kind ${r.kind}">${kind}</div><small>남은 라이프 ${r.life}장. 누르면 다음으로</small></div>`;
-    this.timer = setTimeout(() => this.next(), r.kind === 'drop' ? 1100 : 1600);
+    this.timer = setTimeout(() => this.next(), (r.kind === 'drop' ? 1100 : 1600) * (Fx.mode === 'fast' ? .6 : 1));
   },
 };
 if (typeof document !== 'undefined') document.getElementById('reveal')?.addEventListener('click', () => Reveal.next());
@@ -4090,6 +4294,9 @@ function handleAction(e, onCard) {
       if (S.turnCount === t0 && S.phase === 'attack' && !S.pending && myControl()) dispatch({ type: 'NEXT_PHASE' });
       return;
     }
+    if (k === 'order') return dispatch({ type: 'ORDER', i: +b.dataset.i });
+    if (k === 'fxMode') { Fx.mode = { normal: 'fast', fast: 'off', off: 'normal' }[Fx.mode]; try { localStorage.setItem('bdb-fx', Fx.mode); } catch {} if (Fx.mode === 'off') Fx.skip(); return render(); }
+    if (k === 'sfx') { Sfx.on = !Sfx.on; try { localStorage.setItem('bdb-sfx', Sfx.on ? '1' : '0'); } catch {} if (Sfx.on) { Sfx.ensure(); Sfx.play('trig'); } return render(); }
     if (k === 'keep') return dispatch({ type: 'MULLIGAN', redraw: false });
     if (k === 'redraw') return dispatch({ type: 'MULLIGAN', redraw: true });
     if (k === 'noBlock') return dispatch({ type: 'BLOCK', blocker: null });

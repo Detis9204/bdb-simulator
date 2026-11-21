@@ -79,6 +79,7 @@ const clk = (pg, sel) => { const el = pg.d.querySelector(sel); if (el) el.dispat
       const a = w.eval(`(() => {
         const s=S, pd=s.pending, pick=a=>a[Math.floor(Math.random()*a.length)];
         if (pd) { const P=s.players[pd.player];
+          if (pd.type==='order') return {type:'ORDER',i:Math.floor(Math.random()*pd.items.length)};
           if (pd.type==='mulligan') return {type:'MULLIGAN',redraw:Math.random()<.3};
           if (pd.type==='block') { const bl=s.field.filter(u=>u.owner===pd.player&&!u.rested&&u.uid!==pd.target); return {type:'BLOCK',blocker:Math.random()<.5&&bl.length?pick(bl).uid:null}; }
           if (pd.type==='shot') { const ts=Engine.targetsFor(s,pd.player,DEFS[pd.card.id]); return {type:'SHOT',play:true,target:ts.length?pick(ts):undefined}; }
